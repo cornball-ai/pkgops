@@ -1,3 +1,27 @@
+# pkgops 0.0.1.2
+
+Commit lifecycle (slice 3b), second increment: the **commit-result classifier**.
+Still pure and hermetic -- no session call, no spawn, no broker, no polkit, no
+`pkgstate`.
+
+* `.classify_commit()` turns runix's already-parsed `runix_commit_result` (its C
+  owns the JSON frame parse, the cid check, and the exit/status/delivery gates)
+  into the `pkgops_outcome` to record, the runix condition to signal, and whether
+  the intent must be left open -- applying the contract's close-vs-open rule
+  (§4.6/§4.8). It **never raises and never does IO**, so the orchestration can
+  write the outcome first and only then signal (outcome-closed-before-signal).
+* The four runix `session_status` cases are handled per `effect_session.c`: `ok`
+  (the helper's status + effect_issued rule, closed), `unauthorized` and
+  `spawn_failed` (known no-effect, closed false), and `effect_unknown` (the
+  effect is genuinely unknown, so the intent is **left open**). `effect_issued`
+  is read from runix verbatim, never fabricated.
+* Two design points flagged for review: the outcome now also carries the
+  session-level statuses (which have no helper status), and `spawn_failed` maps
+  to a pkgops-owned `pkgops_spawn_failed` (the contract's taxonomy did not name
+  it).
+* Still held: the actual `open`/`commit`/`write_outcome` orchestration, the
+  polkit branch, and `pkgstate` verification are later increments of 3b.
+
 # pkgops 0.0.1.1
 
 Begins the commit lifecycle (slice 3b), first increment: the **commit-result

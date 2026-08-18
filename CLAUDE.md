@@ -14,16 +14,22 @@ mint nothing.
 Slice **3b (commit lifecycle)** is under way as a **draft PR, built in small
 reviewed increments** — hold at each increment before the next.
 
-- **Increment 1 (this): the commit-result contract** (`R/outcome.R`) — the closed
-  12-status vocabulary + runix condition mapping (drift-pinned to pkgexec
+- **Increment 1 (merged): the commit-result contract** (`R/outcome.R`) — the
+  closed 12-status vocabulary + runix condition mapping (drift-pinned to pkgexec
   v0.0.3), the tri-state `effect_issued`, cid-equality, the `pkgops_outcome`
   object, and the `apt_locked` retryability registration. Pure and hermetic.
-- **Still NOT started** (later increments, each its own review): the
-  `runix::effect_session_*` custody + commit wiring, the polkit authorization
-  branch, and `pkgstate` verification (`pkgstate` becomes an `Imports` only when
-  that increment lands — not before, or it is an unused-Import NOTE). Do not add a
-  mutation-capable path, effect-receipt handling, spawn, or a `pkgstate`
-  dependency ahead of its increment.
+- **Increment 2 (this): the commit-result classifier** (`R/classify.R`) —
+  `.classify_commit()` maps a `runix_commit_result` (runix's C owns the frame
+  parse + cid + delivery gates) to an outcome + condition + `leave_open`, per the
+  §4.6/§4.8 close-vs-open rule. It never raises and never does IO. Also pure.
+- **Still NOT started** (later increments, each its own review): the actual
+  `runix::effect_session_*` `open`/`commit`/`write_outcome` orchestration (the
+  first IO-bearing increment; `effect_session_commit` is only testable via an
+  injectable seam, since the shipped runix has no fake-entrypoint compile flag),
+  the polkit authorization branch, and `pkgstate` verification (`pkgstate`
+  becomes an `Imports` only when that increment lands — not before, or it is an
+  unused-Import NOTE). Do not add a mutation-capable path, effect-receipt
+  handling, spawn, or a `pkgstate` dependency ahead of its increment.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).
