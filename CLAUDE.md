@@ -18,18 +18,30 @@ reviewed increments** — hold at each increment before the next.
   closed 12-status vocabulary + runix condition mapping (drift-pinned to pkgexec
   v0.0.3), the tri-state `effect_issued`, cid-equality, the `pkgops_outcome`
   object, and the `apt_locked` retryability registration. Pure and hermetic.
-- **Increment 2 (this): the commit-result classifier** (`R/classify.R`) —
+- **Increment 2 (merged): the commit-result classifier** (`R/classify.R`) —
   `.classify_commit()` maps a `runix_commit_result` (runix's C owns the frame
   parse + cid + delivery gates) to an outcome + condition + `leave_open`, per the
   §4.6/§4.8 close-vs-open rule. It never raises and never does IO. Also pure.
-- **Still NOT started** (later increments, each its own review): the actual
-  `runix::effect_session_*` `open`/`commit`/`write_outcome` orchestration (the
-  first IO-bearing increment; `effect_session_commit` is only testable via an
-  injectable seam, since the shipped runix has no fake-entrypoint compile flag),
-  the polkit authorization branch, and `pkgstate` verification (`pkgstate`
-  becomes an `Imports` only when that increment lands — not before, or it is an
-  unused-Import NOTE). Do not add a mutation-capable path, effect-receipt
-  handling, spawn, or a `pkgstate` dependency ahead of its increment.
+- **Increment 3 (this): the effect-session orchestration** (`R/commit.R`,
+  `R/session_ops.R`) — `.commit_session()` wires the §4.3 lifecycle steps 1,3,4,
+  5,7,8 (capability → open → commit → classify → write_outcome → signal) with the
+  outcome-closed-before-signal discipline (§4.8). The four runix effect-session R
+  calls are driven through an injectable seam (`session_ops()`/`set_session_ops`,
+  hermetic-test-only; production always uses the real `runix::` defaults, and the
+  privileged verb→entrypoint map stays a hard C constant in runix). `.commit_session`
+  is **internal** — there is no exported per-verb `apt_<verb>()` commit entrypoint
+  yet, because an issuer cannot authorize (polkit) or verify (pkgstate) truthfully
+  until those increments land.
+- **Still NOT started** (later increments, each its own review): the **polkit
+  authorization branch** (§4.3 step 2 — machine-mode `pkcheck`, autonomous-verb
+  handling, the plain-intent `approval_required`/`unauthorized` terminal
+  outcome), **`pkgstate` verification** (§4.3 step 6 — `pkgstate` becomes an
+  `Imports` only when that increment lands, not before, or it is an unused-Import
+  NOTE; it also supplies the outcome record's `observed`/`changed` post-state
+  fields), and then the **exported per-verb `apt_<verb>()` API** (with the
+  preview `{verb,resource,plan_hash}` match check). The durable outcome-record
+  grammar in `.outcome_record()` is intentionally minimal until it is pinned
+  against a real broker in the VM-gated increment.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).
