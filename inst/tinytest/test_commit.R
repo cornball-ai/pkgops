@@ -9,13 +9,18 @@ CID <- "20250101000000000000-0123456789abcdef"
 commit_session <- pkgops:::.commit_session
 set_ops <- pkgops:::set_session_ops
 set_pkcheck <- pkgops:::set_pkcheck
+set_reader <- pkgops:::set_pkgstate_reader
 
-## A committable preview: an `ok` plan carrying a bound digest.
+## A committable preview: an `ok` plan carrying a bound digest. `records` are the
+## resolved records step 6 verifies; the default is empty (nothing to verify ->
+## verified NA, and the pkgstate reader is never touched, so the effect-path tests
+## stay hermetic without injecting one).
 mkprev <- function(verb = "apt.install", resource = "nginx", packages = "nginx",
-                   plan_hash = H, plan_schema = 1L, advisory_verdict = "ok") {
+                   plan_hash = H, plan_schema = 1L, advisory_verdict = "ok",
+                   records = list()) {
     structure(list(schema_version = 1L, verb = verb, resource = resource,
                    plan_schema = plan_schema, plan_hash = plan_hash,
-                   autonomous = FALSE, packages = packages, records = list(),
+                   autonomous = FALSE, packages = packages, records = records,
                    advisory_verdict = advisory_verdict,
                    advisory_detail = NA_character_), class = "pkgops_preview")
 }
@@ -84,12 +89,18 @@ ops_for <- function(log, commit, raise = FALSE,
 ## raised condition (failure). Also installs a fake pkcheck (default: rc 0 ->
 ## authorized, so the effect-path tests reach step 3 hermetically); restores both.
 run_commit <- function(ops, preview = prev, interactive = FALSE,
-                       pkcheck = function(action) 0L, ...) {
+                       pkcheck = function(action) 0L, reader = NULL, ...) {
     old_ops <- set_ops(ops)
     old_pk <- set_pkcheck(pkcheck)
+    if (!is.null(reader)) {
+        old_rd <- set_reader(reader)
+    }
     on.exit({
         set_ops(old_ops)
         set_pkcheck(old_pk)
+        if (!is.null(reader)) {
+            set_reader(old_rd)
+        }
     })
     tryCatch(commit_session(preview, socket_path = "/fake.sock",
                             interactive = interactive, ...),
@@ -360,3 +371,108 @@ lg <- newlog()
 r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), pkcheck = autofn)  # apt.install -> rc 1
 expect_inherits(r, "runix_unauthorized")
 expect_equal(lg$seq, c("capability", "refuse"))
+
+## ============================================================================
+## step 6 -- pkgstate verification (contract 4.7). The verdict is CAPTURED onto
+## the outcome, NEVER raised; the outcome is still written, in order; and
+## verification runs ONLY on the success path (an ok/no_op that is returned).
+## ============================================================================
+
+## A committable install preview carrying one resolved txn record, and a fake
+## reader whose installed() reports a canned post-state (and counts its calls, so
+## a test can prove verification did or did not run). selections() is unused by
+## the txn family but must be a valid frame.
+irec <- list(package = "nginx", architecture = "amd64", action = "install",
+             from_version = "", to_version = "1.2", flags = list())
+prev1 <- mkprev(records = list(irec))
+empty_sel <- function(packages = NULL) {
+    data.frame(package = character(), architecture = character(),
+               selection = character(), stringsAsFactors = FALSE)
+}
+counting_reader <- function(status = "installed", version = "1.2") {
+    e <- new.env(parent = emptyenv())
+    e$n <- 0L
+    e$reader <- list(installed = function() {
+        e$n <- e$n + 1L
+        data.frame(package = "nginx", version = version, architecture = "amd64",
+                   status = status, stringsAsFactors = FALSE)
+    }, selections = empty_sel)
+    e
+}
+
+## success + a MATCHING post-state -> verified TRUE, outcome returned + written,
+## and verification ran exactly once (it read the post-state).
+cr_ok <- counting_reader(status = "installed", version = "1.2")
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = cr_ok$reader)
+expect_inherits(r, "pkgops_outcome")
+expect_identical(r$verified, TRUE)
+expect_true(is.na(r$verify_detail))
+expect_equal(lg$seq, c("capability", "open", "commit", "write_outcome"))
+expect_equal(cr_ok$n, 1L)
+
+## success + a DISAGREEING post-state -> verified FALSE + a detail, but the
+## outcome is STILL returned (not a raised condition) and STILL written: a failed
+## verification never raises and never changes the close.
+cr_bad <- counting_reader(status = "installed", version = "1.1")
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = cr_bad$reader)
+expect_inherits(r, "pkgops_outcome")
+expect_false(inherits(r, "condition"))
+expect_identical(r$verified, FALSE)
+expect_true(grepl("version 1.1", r$verify_detail))
+expect_equal(lg$seq, c("capability", "open", "commit", "write_outcome"))
+
+## a reader that EXPLODES is captured, never propagated -> verified FALSE, the
+## outcome is still returned and written (the belt over .verify()).
+boom_reader <- list(installed = function() stop("dpkg exploded"),
+                    selections = empty_sel)
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = boom_reader)
+expect_inherits(r, "pkgops_outcome")
+expect_identical(r$verified, FALSE)
+expect_true(grepl("verification error|absent|malformed", r$verify_detail))
+expect_true("write_outcome" %in% lg$seq)
+
+## no resolved records -> nothing to verify -> verified NA on a success (and the
+## reader is never touched, so the default hermetic tests stay clean).
+cr_untouched <- counting_reader()
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev,
+                reader = cr_untouched$reader)
+expect_inherits(r, "pkgops_outcome")
+expect_true(is.na(r$verified))
+expect_equal(cr_untouched$n, 0L)                         # short-circuits, no read
+
+## a KNOWN FAILURE is not verified: verification does not run (a failure path has
+## no trustworthy post-state), and the mapped condition is still signaled after
+## the outcome was written.
+cr_fail <- counting_reader(status = "installed", version = "1.2")  # would verify TRUE
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "operation_failed", TRUE)), preview = prev1,
+                reader = cr_fail$reader)
+expect_inherits(r, "runix_operation_failed")
+expect_equal(cr_fail$n, 0L)                              # verification skipped
+expect_true("write_outcome" %in% lg$seq)                 # known close still written
+
+## a LEFT-OPEN effect_unknown is not verified either (the effect is unknown) and
+## the intent stays open (no write_outcome).
+cr_open <- counting_reader(status = "installed", version = "1.2")
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("effect_unknown", effect_issued = NA)),
+                preview = prev1, reader = cr_open$reader)
+expect_inherits(r, "runix_helper_bad_result")
+expect_equal(cr_open$n, 0L)
+expect_false("write_outcome" %in% lg$seq)
+
+## verification is INDEPENDENT of the helper status (4.7): a clean `ok` whose
+## post-state disagrees is a verification FAILURE, not a pass.
+cr_lie <- counting_reader(status = "half-configured", version = "1.2")
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = cr_lie$reader)
+expect_identical(r$verified, FALSE)                      # helper said ok; the host disagrees
+expect_true(grepl("half-configured", r$verify_detail))
