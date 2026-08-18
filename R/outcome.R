@@ -56,11 +56,24 @@
                                unauthorized = "runix_unauthorized",
                                effect_unknown = "runix_helper_bad_result")
 
+## The POLKIT-terminal statuses, produced by the machine-mode authorization branch
+## BEFORE any effect intent is opened (contract 4.4). Both close a plain intent
+## with effect_issued = FALSE (no effect ran) and never leave anything open.
+##   unauthorized       a flat polkit denial (shares runix_unauthorized with the
+##                      pkexec session-level denial above -- same status, same
+##                      condition, so the two channels never diverge).
+##   approval_required  a challenge that cannot be obtained non-interactively; a
+##                      human admin could authorize a re-run (runix_approval_required).
+.PKGOPS_POLKIT_CONDITION <- c(approval_required = "runix_approval_required")
+
 ## The full status vocabulary an outcome may carry: a helper status (mapped to its
-## runix condition) or a session-level status. Both are canonical inputs to
-## new_pkgops_outcome(); the drift test pins only the twelve HELPER statuses.
+## runix condition), a session-level status, or a polkit-terminal status. All are
+## canonical inputs to new_pkgops_outcome(); the drift test pins only the twelve
+## HELPER statuses. (unauthorized appears once, shared by the session and polkit
+## channels.)
 .PKGOPS_ALL_STATUS_CONDITION <- c(.PKGOPS_STATUS_CONDITION,
-                                  .PKGOPS_SESSION_CONDITION)
+                                  .PKGOPS_SESSION_CONDITION,
+                                  .PKGOPS_POLKIT_CONDITION)
 
 ## The runix condition class for a status -- a helper status ("held" ->
 ## "runix_held", "ok"/"no_op" -> themselves) or a session-level status
@@ -101,6 +114,15 @@
 .cid_equal <- function(result_cid, intent_cid) {
     .is_scalar_str(result_cid) && .is_scalar_str(intent_cid) &&
     nzchar(result_cid) && identical(result_cid, intent_cid)
+}
+
+## The broker's correlation-id grammar: 20 digits, '-', 16 lowercase hex. Pinned
+## to runix's .BROKER_CID_RE (audit_broker_sink.R) -- if the broker changes its
+## cid shape, this must change in lockstep. A durable outcome is reported as
+## closed only when the broker minted a real cid for it.
+.BROKER_CID_RE <- "^[0-9]{20}-[0-9a-f]{16}$"
+.valid_broker_cid <- function(x) {
+    .is_scalar_str(x) && grepl(.BROKER_CID_RE, x)
 }
 
 ## Enforce a tri-state field (TRUE / FALSE / NA). Unlike effect_issued -- which

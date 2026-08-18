@@ -1,7 +1,8 @@
-## Injectable seam over runix's exported effect-session API -- the four calls the
-## commit orchestrator (R/commit.R) drives: the capability negotiation, and the
-## three-call session (open -> commit -> write_outcome). Same injectable shape as
-## the preview runner (R/runner.R): production code calls session_ops()$<fn>(...),
+## Injectable seam over runix's broker-facing API -- the calls the commit
+## orchestrator (R/commit.R) drives: the capability negotiation, the three-call
+## effect session (open -> commit -> write_outcome), and the plain-intent
+## terminal `refuse` (the machine-mode polkit refusal path). Same injectable shape
+## as the preview runner (R/runner.R): production code calls session_ops()$<fn>(...),
 ## and a hermetic test swaps in a fake list via set_session_ops(), restoring with
 ## set_session_ops(NULL).
 ##
@@ -35,15 +36,35 @@ write_outcome_default <- function(session, record, ...) {
     runix::effect_session_write_outcome(session, record, ...)
 }
 
+## The plain-intent terminal-refusal path (contract 4.4): a machine-mode polkit
+## refusal opens a PLAIN intent (no effect, no receipt) and writes the matching
+## terminal outcome under one broker-minted correlation id, so the refused attempt
+## is durably recorded without minting an unused effect receipt. Uses the generic
+## broker sink + audit_two_phase with a no-op effect; fail-closed (audit_two_phase
+## aborts if the intent is not durable). Returns audit_two_phase's result list
+## (carrying correlation_id + audit_persisted). The record carries only domain
+## fields (operation/resource/effect_issued/outcome); reserved fields such as
+## correlation_id are broker-owned and must not appear.
+refuse_default <- function(socket_path, operation, resource, status, ...) {
+    sink <- runix::broker_audit_sink(socket_path, ...)
+    runix::audit_two_phase(sink,
+                           intent = list(operation = operation, resource = resource,
+            effect_issued = FALSE, outcome = "intent"),
+                           effect = function(cid) NULL,
+                           outcome = function(result) list(operation = operation, resource = resource,
+            effect_issued = FALSE, outcome = status))
+}
+
 .PKGOPS_SESSION_OPS_DEFAULT <- list(capability = cap_default,
                                     open = open_default,
                                     commit = commit_default,
-                                    write_outcome = write_outcome_default)
+                                    write_outcome = write_outcome_default,
+                                    refuse = refuse_default)
 
 .pkgops_session_ops <- local({
     state <- new.env(parent = emptyenv())
     ## Merge any injected functions over the defaults, so a test may shadow a
-    ## single call while the rest stay real; a hermetic test shadows all four so
+    ## single call while the rest stay real; a hermetic test shadows every op so
     ## nothing reaches the broker.
     session_ops <- function() {
         if (is.null(state$ops)) {

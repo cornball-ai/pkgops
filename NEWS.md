@@ -1,3 +1,30 @@
+# pkgops 0.0.1.5
+
+Commit lifecycle (slice 3b): **wire the polkit authorization into
+`.commit_session`** (§4.3 step 2). The decision from the previous increment now
+gates the commit, including the plain-intent terminal refusal path. Still
+hermetic (the broker, `pkexec`/`pkcheck`, and dpkg are all behind seams) and
+still internal -- pkgstate verification and the exported API remain.
+
+* Step 2 runs `.authorize(verb_spec, interactive)` after the capability
+  negotiation and before the effect intent is opened. **Interactive** proceeds to
+  the effect intent (the `pkexec` prompt authenticates at the spawn); **machine
+  mode** maps the `pkcheck` decision.
+* A machine-mode refusal never opens an effect intent. `unauthorized` and
+  `approval_required` open a **plain intent** (no receipt) via the generic broker
+  sink and write the matching terminal outcome (`effect_issued = FALSE`) under one
+  correlation id, then signal `runix_unauthorized` / `runix_approval_required` --
+  the record is the close that precedes the signal, so a refused attempt is
+  durably audited without minting an unused effect receipt.
+* A check that could not be run at all (`check_failed`) fails closed with
+  **nothing recorded** (`pkgops_polkit_check_failed`): there is no authoritative
+  decision to persist. If the refusal record itself cannot be written, that error
+  propagates -- either way no effect ran.
+* `interactive` is a caller-supplied argument (runix exposes no TTY probe, so mode
+  detection stays at the CLI layer); it defaults to `FALSE` (machine mode).
+* Still deferred (their own later increments): `pkgstate` verification and the
+  exported per-verb `apt_<verb>()` API.
+
 # pkgops 0.0.1.4
 
 Commit lifecycle (slice 3b), fourth increment: the **polkit authorization

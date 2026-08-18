@@ -32,6 +32,10 @@ for (st in c("package_not_owned", "held", "protected_package", "resolve_failed",
 expect_equal(pkgops:::.status_condition("apt_locked"), "runix_apt_locked")
 expect_equal(pkgops:::.status_condition("internal"), "runix_helper_internal")
 expect_equal(pkgops:::.status_condition("ok"), "ok")
+# session-level and polkit-terminal statuses are canonical inputs too
+expect_equal(pkgops:::.status_condition("unauthorized"), "runix_unauthorized")
+expect_equal(pkgops:::.status_condition("approval_required"), "runix_approval_required")
+expect_equal(pkgops:::.status_condition("effect_unknown"), "runix_helper_bad_result")
 
 # an unknown or malformed status fails closed as runix_helper_bad_result
 e <- tryCatch(pkgops:::.status_condition("frobnicated"), error = identity)
