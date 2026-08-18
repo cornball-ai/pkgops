@@ -40,17 +40,41 @@
 ## delivered leaves the effect unknown, never safe to auto-retry.
 .PKGOPS_RETRYABLE_STATUSES <- "apt_locked"
 
-## The runix condition class for a commit status, or "ok"/"no_op" for success.
-## An unrecognised status is a result pkgops cannot trust -- fail closed as
-## runix_helper_bad_result rather than guess a mapping.
+## The SESSION-level statuses runix's effect_session_commit reports when the
+## helper did not produce a trustworthy result of its own (src/effect_session.c),
+## and their conditions. These are distinct from the twelve HELPER statuses above
+## (which come from a helper that spoke): they describe how the session itself
+## ended when no helper status exists.
+##   spawn_failed    posix_spawn produced no child -> the effect definitely did
+##                   not run. The contract's condition taxonomy does not name
+##                   this case; pkgops owns pkgops_spawn_failed for it. [REVIEW]
+##   unauthorized    pkexec denied/not-found -> a known pre-exec refusal
+##                   (runix_unauthorized), close false.
+##   effect_unknown  the child ran but gave nothing trustworthy -> the effect is
+##                   UNKNOWN (runix_helper_bad_result), the intent is left open.
+.PKGOPS_SESSION_CONDITION <- c(spawn_failed = "pkgops_spawn_failed",
+                               unauthorized = "runix_unauthorized",
+                               effect_unknown = "runix_helper_bad_result")
+
+## The full status vocabulary an outcome may carry: a helper status (mapped to its
+## runix condition) or a session-level status. Both are canonical inputs to
+## new_pkgops_outcome(); the drift test pins only the twelve HELPER statuses.
+.PKGOPS_ALL_STATUS_CONDITION <- c(.PKGOPS_STATUS_CONDITION,
+                                  .PKGOPS_SESSION_CONDITION)
+
+## The runix condition class for a status -- a helper status ("held" ->
+## "runix_held", "ok"/"no_op" -> themselves) or a session-level status
+## ("unauthorized" -> "runix_unauthorized"). An unrecognised status is a result
+## pkgops cannot trust -- fail closed as runix_helper_bad_result, never guessed.
 .status_condition <- function(status) {
-    if (!.is_scalar_str(status) || !status %in% .PKGOPS_COMMIT_STATUSES) {
+    if (!.is_scalar_str(status) ||
+        !status %in% names(.PKGOPS_ALL_STATUS_CONDITION)) {
         stop_pkgops("unknown commit status: ",
             if (.is_scalar_str(status)) shQuote(status) else "<malformed>",
                     class = "runix_helper_bad_result",
                     data = list(status = status))
     }
-    unname(.PKGOPS_STATUS_CONDITION[status])
+    unname(.PKGOPS_ALL_STATUS_CONDITION[status])
 }
 
 .status_is_success <- function(status) {
