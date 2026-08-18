@@ -116,6 +116,15 @@
     nzchar(result_cid) && identical(result_cid, intent_cid)
 }
 
+## The broker's correlation-id grammar: 20 digits, '-', 16 lowercase hex. Pinned
+## to runix's .BROKER_CID_RE (audit_broker_sink.R) -- if the broker changes its
+## cid shape, this must change in lockstep. A durable outcome is reported as
+## closed only when the broker minted a real cid for it.
+.BROKER_CID_RE <- "^[0-9]{20}-[0-9a-f]{16}$"
+.valid_broker_cid <- function(x) {
+    .is_scalar_str(x) && grepl(.BROKER_CID_RE, x)
+}
+
 ## Enforce a tri-state field (TRUE / FALSE / NA). Unlike effect_issued -- which
 ## carries UNTRUSTED helper input and normalizes a bad value to the NA "unknown"
 ## -- `verified` is pkgops's OWN verification verdict, so a value outside the

@@ -303,6 +303,46 @@ r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE), refuse_err = audit_err),
 expect_inherits(r, "runix_audit_error")                  # record failure surfaces
 expect_equal(lg$seq, c("capability", "refuse"))          # never opened the effect intent
 
+## ---- a NON-PERSISTED refusal result is NOT reported as a closed refusal ------
+## audit_two_phase can return audit_persisted=FALSE (e.g. the terminal outcome did
+## not land) WITHOUT raising; that must fail closed as a persistence error, never
+## be signaled as a clean runix_unauthorized.
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE),
+                        refuse = list(correlation_id = CID, audit_persisted = FALSE)),
+                pkcheck = function(a) 1L)
+expect_inherits(r, "runix_broker_error")
+expect_false(inherits(r, "runix_unauthorized"))          # not a closed refusal
+expect_false(isTRUE(r$audit_persisted))
+expect_equal(lg$seq, c("capability", "refuse"))
+
+## ---- a refusal result with a MALFORMED cid also fails closed ----------------
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE),
+                        refuse = list(correlation_id = "not-a-broker-cid",
+                                      audit_persisted = TRUE)),
+                pkcheck = function(a) 2L)
+expect_inherits(r, "runix_broker_error")
+expect_false(inherits(r, "runix_approval_required"))
+expect_true(is.na(r$correlation_id))                     # the bad cid is not carried through
+
+## ---- a missing audit_persisted field is treated as not persisted ------------
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE),
+                        refuse = list(correlation_id = CID)),  # no audit_persisted
+                pkcheck = function(a) 1L)
+expect_inherits(r, "runix_broker_error")
+
+## ---- the broker cid grammar (pinned to runix .BROKER_CID_RE) -----------------
+vcid <- pkgops:::.valid_broker_cid
+expect_true(vcid("20250101000000000000-0123456789abcdef"))
+expect_true(vcid("00001786382512165708-a061ec02cffe1b2b"))            # 20 digit + 16 hex
+expect_false(vcid("2025-abc"))
+expect_false(vcid("20250101000000000000-0123456789ABCDEF"))           # uppercase hex rejected
+expect_false(vcid(NA_character_))
+expect_false(vcid(NULL))
+expect_false(vcid(""))
+
 ## ---- autonomous verb, machine mode, a member (rc 0) proceeds ----------------
 lg <- newlog()
 autofn <- function(action) {

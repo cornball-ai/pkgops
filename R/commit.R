@@ -115,10 +115,28 @@
     ## refusal could not be persisted and propagates (nothing ran regardless).
     res <- ops$refuse(socket_path, operation = preview$verb,
                       resource = preview$resource, status = decision)
-    cid <- if (is.list(res) && .is_scalar_str(res$correlation_id)) {
-        res$correlation_id
+    ## The refusal is reported as a CLOSED terminal outcome only when it DURABLY
+    ## persisted (both intent and outcome, audit_persisted == TRUE) under a real
+    ## broker cid. A non-persisted or malformed result must NOT be signaled as a
+    ## closed refusal -- that would claim an audit that never landed. Fail closed
+    ## as a persistence error instead (like the effect path's persist failure).
+    if (is.list(res)) {
+        cid <- res$correlation_id
     } else {
-        NA_character_
+        cid <- NULL
+    }
+    if (!isTRUE(res$audit_persisted) || !.valid_broker_cid(cid)) {
+        stop_pkgops("apt ", preview$verb, ": the ", decision,
+                    " outcome could not be durably recorded",
+                    class = "runix_broker_error",
+                    data = list(verb = preview$verb, resource = preview$resource,
+                                decision = decision,
+                                correlation_id = if (.valid_broker_cid(cid)) {
+                    cid
+                } else {
+                    NA_character_
+                },
+                                audit_persisted = isTRUE(res$audit_persisted)))
     }
     cls <- .status_condition(decision) # unauthorized -> runix_unauthorized, etc.
     msg <- switch(decision,
