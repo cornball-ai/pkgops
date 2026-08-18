@@ -79,9 +79,26 @@
     nzchar(result_cid) && identical(result_cid, intent_cid)
 }
 
+## Enforce a tri-state field (TRUE / FALSE / NA). Unlike effect_issued -- which
+## carries UNTRUSTED helper input and normalizes a bad value to the NA "unknown"
+## -- `verified` is pkgops's OWN verification verdict, so a value outside the
+## tri-state is a programming error and fails closed rather than degrading.
+.check_tristate <- function(x, what) {
+    if (!(length(x) == 1L && is.logical(x))) {
+        stop_pkgops("`", what, "` must be TRUE, FALSE, or NA",
+                    class = "pkgops_bad_request")
+    }
+    x
+}
+
 ## The typed, versioned outcome an issuer records for a commit (pkgops-plan.md
-## 6.2). `status` is the mapped condition name (or "ok"/"no_op"); `effect_issued`
-## and `verified` are tri-state (TRUE/FALSE/NA); `condition` is the runix
+## 6.2). CANONICAL REPRESENTATION: `status` is stored as the MAPPED runix
+## condition name (or "ok"/"no_op" for success) -- the constructor takes the RAW
+## helper status, maps it through .status_condition(), and rejects any status
+## outside the closed vocabulary (fail closed as runix_helper_bad_result), so the
+## object never carries an unmapped or unknown status. `effect_issued` is the
+## helper's tri-state (untrusted -> normalized); `verified` is pkgops's own
+## tri-state verdict (enforced, not normalized); `condition` is the runix
 ## condition object for a non-success outcome, or NULL. `verified`/`verify_detail`
 ## are NA in this increment -- pkgstate verification lands in a later one.
 new_pkgops_outcome <- function(correlation_id, verb, resource, plan_hash,
@@ -90,10 +107,10 @@ new_pkgops_outcome <- function(correlation_id, verb, resource, plan_hash,
                                condition = NULL) {
     structure(list(schema_version = 1L, correlation_id = correlation_id,
                    verb = verb, resource = resource, plan_hash = plan_hash,
-                   status = status,
+                   status = .status_condition(status),
                    effect_issued = .norm_effect_issued(effect_issued),
-                   verified = verified, verify_detail = verify_detail,
-                   condition = condition),
+                   verified = .check_tristate(verified, "verified"),
+                   verify_detail = verify_detail, condition = condition),
               class = "pkgops_outcome")
 }
 

@@ -91,11 +91,43 @@ expect_identical(ok_out$effect_issued, TRUE)
 expect_true(is.na(ok_out$verified))          # verification is a later increment
 expect_null(ok_out$condition)
 
-# a non-success outcome carries the mapped status and a normalized effect_issued
+# the constructor takes the RAW helper status and stores its canonical mapped
+# form; effect_issued (untrusted) is normalized
 held_out <- pkgops:::new_pkgops_outcome(
     correlation_id = cid, verb = "apt.hold", resource = "nginx",
-    plan_hash = H, status = "runix_held", effect_issued = "bogus")
+    plan_hash = H, status = "held", effect_issued = "bogus")
+expect_equal(held_out$status, "runix_held")    # stored as the mapped condition
 expect_identical(held_out$effect_issued, NA)   # bogus -> unknown
+
+# no_op and the commit-only statuses round-trip through the mapping
+expect_equal(pkgops:::new_pkgops_outcome(cid, "apt.upgrade", "", H, "no_op")$status,
+             "no_op")
+expect_equal(pkgops:::new_pkgops_outcome(cid, "apt.install", "nginx", H,
+                                         "apt_locked")$status, "runix_apt_locked")
+
+# an unknown status is rejected (fail closed), never stored raw
+e_st <- tryCatch(pkgops:::new_pkgops_outcome(cid, "apt.install", "nginx", H,
+                                             "frobnicated"), error = identity)
+expect_inherits(e_st, "runix_helper_bad_result")
+expect_inherits(e_st, "pkgops_error")
+# ... and a mapped name fed back in is NOT a valid raw status
+e_mapped <- tryCatch(pkgops:::new_pkgops_outcome(cid, "apt.hold", "nginx", H,
+                                                 "runix_held"), error = identity)
+expect_inherits(e_mapped, "runix_helper_bad_result")
+
+# verified is enforced as a strict tri-state (pkgops's own verdict)
+expect_true(is.na(pkgops:::new_pkgops_outcome(cid, "apt.install", "nginx", H,
+                                              "ok", verified = NA)$verified))
+expect_identical(pkgops:::new_pkgops_outcome(cid, "apt.install", "nginx", H,
+                                             "ok", verified = TRUE)$verified, TRUE)
+expect_identical(pkgops:::new_pkgops_outcome(cid, "apt.install", "nginx", H,
+                                             "ok", verified = FALSE)$verified, FALSE)
+for (bad in list("yes", 1L, c(TRUE, FALSE), NULL, NA_character_)) {
+    e_v <- tryCatch(pkgops:::new_pkgops_outcome(cid, "apt.install", "nginx", H,
+                                                "ok", verified = bad),
+                    error = identity)
+    expect_inherits(e_v, "pkgops_bad_request")
+}
 
 out <- capture.output(print(ok_out))
 expect_true(any(grepl("pkgops outcome", out)))
