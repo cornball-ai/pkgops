@@ -1,3 +1,34 @@
+# pkgops 0.0.1.3
+
+Commit lifecycle (slice 3b), third increment: the **effect-session
+orchestration** -- the first IO-bearing increment. Still hermetic (the broker,
+the pkexec entrypoint, and dpkg are all behind an injectable seam), and still
+**no exported commit entrypoint**: polkit authorization and `pkgstate`
+verification are later increments, so an issuer cannot yet authorize or verify
+truthfully.
+
+* `.commit_session()` (internal) drives the contract's branched commit lifecycle
+  (§4.3): capability negotiation, open the effect-required intent, commit through
+  the runix effect-session, classify the result, write the outcome, then signal.
+  The **outcome is always written before the condition is signaled** (§4.8): a
+  known failure closes the durable intent first, then raises; a genuinely
+  effect-unknown result (a malformed helper reply, a raised commit, or a persist
+  failure) leaves the intent open for reconciliation and never fabricates an
+  `effect_issued:false`.
+* The four runix effect-session R calls (`effect_capability`,
+  `effect_session_open`/`_commit`/`_write_outcome`) are driven through an
+  injectable seam (`session_ops()`), so the whole lifecycle is tested against
+  fakes with no root, no broker, and no dpkg. Production always uses the real
+  `runix::` calls; the privileged verb-to-entrypoint map stays a hard C constant
+  inside runix, with no runtime seam.
+* Two steps of the lifecycle are **deferred to their own later increments** and
+  marked in the source: the polkit authorization branch (§4.3 step 2) and
+  `pkgstate` verification (§4.3 step 6). Until they land, `.commit_session` stays
+  internal and `verified` stays `NA`.
+* Boundary: `.outcome_record()` is intentionally minimal (the audit fields pkgops
+  owns before verification); the exact durable-record grammar and its alignment
+  with the broker's record schema are pinned in the VM-gated increment.
+
 # pkgops 0.0.1.2
 
 Commit lifecycle (slice 3b), second increment: the **commit-result classifier**.
