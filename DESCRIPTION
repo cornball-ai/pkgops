@@ -1,7 +1,7 @@
 Package: pkgops
 Type: Package
 Title: Unprivileged Issuer for 'APT' Package-State Mutations
-Version: 0.0.1.6
+Version: 0.0.1.7
 Date: 2026-08-18
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"), email = "troy@cornball.ai",
