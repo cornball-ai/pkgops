@@ -32,8 +32,15 @@ expect_equal(decision(127), "check_failed")        # no pkcheck / spawn failure
 expect_equal(decision(124), "check_failed")        # timeout
 # a non-interpretable rc value is check_failed, never silently authorized
 expect_equal(decision(NA_integer_), "check_failed")
+expect_equal(decision(NA_real_), "check_failed")
 expect_equal(decision("nope"), "check_failed")
 expect_equal(decision(numeric(0)), "check_failed")
+# a fractional rc must NOT truncate into an authoritative decision (1.5 -> 1)
+expect_equal(decision(1.5), "check_failed")
+expect_equal(decision(2.5), "check_failed")
+expect_equal(decision(0.9), "check_failed")
+# an integer-valued double is still fine (2.0 is 2)
+expect_equal(decision(2.0), "approval_required")
 # every decision the map can produce is in the closed vocabulary
 for (rc in c(-1, 0, 1, 2, 3, 4, 124, 126, 127)) {
     expect_true(decision(rc) %in% pkgops:::.POLKIT_DECISIONS)

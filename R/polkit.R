@@ -96,7 +96,11 @@ set_pkcheck <- .pkgops_pkcheck$set_pkcheck
 ## against real polkit behaviour in the VM-gated increment, where the terminal
 ## outcomes meet a live broker.
 .pkcheck_decision <- function(rc) {
-    if (!(length(rc) == 1L && is.numeric(rc) && is.finite(rc))) {
+    ## require a finite, scalar, INTEGER-VALUED numeric before coercion: a
+    ## fractional 1.5 must fail closed as check_failed, never truncate to 1 and be
+    ## read as `unauthorized`.
+    if (!(length(rc) == 1L && is.numeric(rc) && is.finite(rc) &&
+            rc == floor(rc))) {
         return("check_failed")
     }
     switch(as.character(as.integer(rc)), "0" = "authorized",
