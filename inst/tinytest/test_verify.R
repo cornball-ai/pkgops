@@ -272,3 +272,60 @@ for (h in hostile) {
 old <- set_reader(reader(inst_df("nginx", "1.2", "amd64", "installed")))
 expect_identical(verify(p_inst)$verified, TRUE)    # uses the injected reader
 set_reader(old)                                    # restore (default pkgstate)
+
+## ============================================================================
+## .observe (R/verify.R): the observed post-state object for the durable record,
+## and .state_changed: the pre/post diff (D7 = S-B).
+## ============================================================================
+observe <- pkgops:::.observe
+state_changed <- pkgops:::.state_changed
+
+## ---- transaction: {status, version} keyed by package:arch --------------------
+o <- observe(p_inst, reader(inst_df("nginx", "1.2", "amd64", "installed")))
+expect_false(o$read_failed)
+expect_equal(o$state, list("nginx:amd64" = list(status = "installed",
+                                                version = "1.2")))
+## an absent package reads back not-installed/"" (the key is still present)
+o <- observe(p_inst, reader(inst_df()))
+expect_equal(o$state, list("nginx:amd64" = list(status = "not-installed",
+                                                version = "")))
+## multi-record: one entry per resolved record, each to its own arch row
+p2 <- prevv("apt.install", list(txn("nginx", "install", "1.2", "amd64"),
+                                txn("nginx", "install", "1.0", "i386")))
+o <- observe(p2, reader(inst_df(c("nginx", "nginx"), c("1.2", "1.0"),
+                                c("amd64", "i386"), c("installed", "installed"))))
+expect_equal(names(o$state), c("nginx:amd64", "nginx:i386"))
+expect_equal(o$state[["nginx:i386"]], list(status = "installed", version = "1.0"))
+
+## ---- hold: {selection} keyed by identity ------------------------------------
+o <- observe(prevv("apt.hold", list(hld("nginx", "install", "hold"))),
+             reader(selections = sel_df("nginx", "amd64", "hold")))
+expect_equal(o$state, list("nginx" = list(selection = "hold")))
+o <- observe(prevv("apt.hold", list(hld("nginx:amd64", "install", "hold"))),
+             reader(selections = sel_df("nginx", "amd64", "hold")))
+expect_equal(o$state, list("nginx:amd64" = list(selection = "hold")))
+
+## ---- update / no records: nothing observable (state NULL, not a read failure) -
+o <- observe(prevv("apt.update", list()), reader())
+expect_null(o$state)
+expect_false(o$read_failed)
+o <- observe(prevv("apt.install", list()), reader())
+expect_null(o$state)
+expect_false(o$read_failed)
+
+## ---- a reader that throws -> read_failed TRUE, state NULL, never raises -------
+boom <- list(installed = function() stop("dpkg exploded"),
+             selections = function(packages = NULL) sel_df())
+o <- observe(p_inst, boom)
+expect_true(o$read_failed)
+expect_null(o$state)
+
+## ---- .state_changed: the observed pre/post diff ------------------------------
+before <- observe(p_inst, reader(inst_df()))                       # absent
+after <- observe(p_inst, reader(inst_df("nginx", "1.2", "amd64", "installed")))
+expect_true(state_changed(before, after))          # absent -> installed: changed
+expect_false(state_changed(after, after))          # identical: no change
+## either snapshot unavailable -> NA (never inferred)
+expect_true(is.na(state_changed(list(state = NULL, read_failed = FALSE), after)))
+expect_true(is.na(state_changed(list(state = NULL, read_failed = TRUE), after)))
+expect_true(is.na(state_changed(before, list(state = NULL, read_failed = TRUE))))

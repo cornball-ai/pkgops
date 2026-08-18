@@ -1,12 +1,15 @@
-## pkgstate verification (contract 4.7 / 6.3): read native dpkg/apt ground truth
-## and check every RESOLVED RECORD of the committed preview against its planned
-## post-state. Verification is INDEPENDENT of the helper's self-report -- a clean
-## helper status with a disagreeing post-state is a verification FAILURE, not a
-## success (4.7). This layer is pure: the pkgstate reads go through an injectable
-## seam (default = pkgstate::dpkg_installed / dpkg_selections), so the suite runs
-## against canned data frames and never queries dpkg. The next increment wires
-## .verify() into .commit_session step 6, CAPTURING a failure into the outcome
-## (never raising -- the outcome must still be written, 4.3 step 6).
+## pkgstate verification (contract 4.7 / 6.3) + the observed post-state for the
+## durable record (VM-gate plan 2.4). .verify() reads native dpkg/apt ground truth
+## and checks every RESOLVED RECORD of the committed preview against its planned
+## post-state, INDEPENDENT of the helper's self-report -- a clean helper status with
+## a disagreeing post-state is a verification FAILURE, not a success (4.7).
+## .observe() reads the same records' state into the record's `observed` object;
+## .commit_session snapshots it pre- and post-commit so `state_changed` is a real
+## observed diff (D7 = S-B), never inferred from effect_issued. This layer is pure:
+## the pkgstate reads go through an injectable seam (default = pkgstate::
+## dpkg_installed / dpkg_selections), so the suite runs against canned data frames
+## and never queries dpkg. .commit_session step 6 CAPTURES the verdict + observed
+## into the outcome, never raising -- the outcome must still be written (4.3 step 6).
 ##
 ## Record grammar + post-state semantics are pinned to shipped pkgexec 0.0.3
 ## (tools/preview.cc, src/apt_common.cc) and pkgstate 0.0.1.9 (dpkg_installed's
@@ -65,6 +68,28 @@ selections_default <- function(packages = NULL) {
 })
 pkgstate_reader <- .pkgops_pkgstate_reader$pkgstate_reader
 set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
+
+## Wrap a reader so its underlying installed()/selections() is read AT MOST ONCE
+## and cached. The commit lifecycle's post-commit verdict (.verify) and observed
+## post-state (.observe) then derive from the SAME snapshot -- one dpkg read, and no
+## TOCTOU window (the dpkg lock is released after the commit, so two live reads
+## could disagree and make `changed` and `observed` describe different states).
+## selections() caches on first call; the two callers derive the same package set
+## from the same preview, so the ignored later `packages` arg is not a hazard.
+.freeze_reader <- function(reader) {
+    cache <- new.env(parent = emptyenv())
+    list(installed = function() {
+        if (is.null(cache$inst)) {
+            cache$inst <- reader$installed()
+        }
+        cache$inst
+    }, selections = function(packages = NULL) {
+        if (is.null(cache$sel)) {
+            cache$sel <- reader$selections(packages)
+        }
+        cache$sel
+    })
+}
 
 ## A scalar string from a decoded record field, or NA if absent/malformed. Robust
 ## to a non-list record (a malformed/hand-built preview): a non-list rec yields NA
@@ -306,4 +331,109 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
         list(verified = FALSE,
              detail = paste0("verification error: ", conditionMessage(e)))
     })
+}
+
+## Read the OBSERVED post-state of a preview's resolved records into the durable
+## record's `observed` object (VM-gate plan 2.4), independent of the verdict. Used
+## twice by the commit lifecycle -- a pre-commit snapshot and the post-commit read
+## -- so `state_changed` is a real before/after diff (D7 = S-B), never inferred from
+## effect_issued. Returns list(state, read_failed): `state` is a named list keyed by
+## `package:arch` (one entry per resolved record), or NULL when there is nothing to
+## observe (update / no records); `read_failed` is TRUE when the pkgstate read threw
+## (the belt catches it, so .observe never raises). `state` uses only the same
+## reader seam as .verify, so the lifecycle stays hermetic.
+.observe <- function(preview, reader = pkgstate_reader()) {
+    fam <- .verify_family(preview$verb)
+    if (is.null(fam) || identical(fam, "update")) {
+        return(list(state = NULL, read_failed = FALSE))
+    }
+    records <- preview$records
+    if (!is.list(records) || length(records) == 0L) {
+        return(list(state = NULL, read_failed = FALSE))
+    }
+    tryCatch(if (identical(fam, "hold")) {
+            .observe_hold(records, reader)
+        } else {
+            .observe_installed(records, reader)
+        }, error = function(e) list(state = NULL, read_failed = TRUE))
+}
+
+## The observed installed state (txn + configure): {status, version} per record,
+## keyed by `package:arch`. An absent package reads back as not-installed/"" so the
+## key is still present (documenting what was checked). A malformed record (no
+## package/arch) is skipped -- .verify already fails it; the observation only
+## records what it can read.
+.observe_installed <- function(records, reader) {
+    inst <- reader$installed()
+    .require_cols(inst, c("package", "version", "architecture", "status"),
+                  "installed")
+    state <- list()
+    for (rec in records) {
+        pkg <- .rec_str(rec, "package")
+        arch <- .rec_str(rec, "architecture")
+        if (is.na(pkg) || is.na(arch)) {
+            next
+        }
+        key <- paste0(pkg, ":", arch)
+        row <- inst[!is.na(inst$package) & inst$package == pkg &
+            !is.na(inst$architecture) &
+            inst$architecture == arch,, drop = FALSE]
+        if (nrow(row) > 0L) {
+            state[[key]] <- list(status = as.character(row$status[1L]),
+                                 version = as.character(row$version[1L]))
+        } else {
+            state[[key]] <- list(status = "not-installed", version = "")
+        }
+    }
+    list(state = if (length(state) > 0L) state else NULL, read_failed = FALSE)
+}
+
+## The observed selection state (hold/unhold): {selection} per target, keyed by the
+## record's identity (`package` or `package:arch`). Mirrors .verify_hold's matching.
+.observe_hold <- function(records, reader) {
+    parsed <- lapply(records, function(rec) {
+        .split_pkg_arch(.rec_str(rec, "package"))
+    })
+    pkgs <- unique(vapply(parsed, function(p) p$package, character(1)))
+    sel <- reader$selections(pkgs[!is.na(pkgs)])
+    .require_cols(sel, c("package", "architecture", "selection"), "selections")
+    state <- list()
+    for (p in parsed) {
+        if (is.na(p$package)) {
+            next
+        }
+        key <- if (is.na(p$architecture)) {
+            p$package
+        } else {
+            paste0(p$package, ":", p$architecture)
+        }
+        hit <- !is.na(sel$package) & sel$package == p$package
+        if (!is.na(p$architecture)) {
+            hit <- hit & !is.na(sel$architecture) &
+            sel$architecture == p$architecture
+        }
+        row <- sel[hit,, drop = FALSE]
+        state[[key]] <- list(selection = if (nrow(row) > 0L) {
+                as.character(row$selection[1L])
+            } else {
+                NA_character_
+            })
+    }
+    list(state = if (length(state) > 0L) state else NULL, read_failed = FALSE)
+}
+
+## The observed pre/post diff for `state_changed` (D7 = S-B): TRUE iff the observed
+## state actually differed between the pre-commit and post-commit snapshots, FALSE
+## iff it did not, and NA (JSON null) whenever EITHER snapshot is unavailable -- a
+## read failure on either side, or nothing observable (update). NEVER derived from
+## effect_issued: an issued effect (or an operation_failed / dpkg_broken that began)
+## need not have changed the observed state.
+.state_changed <- function(before, after) {
+    if (isTRUE(before$read_failed) || isTRUE(after$read_failed)) {
+        return(NA)
+    }
+    if (is.null(before$state) || is.null(after$state)) {
+        return(NA)
+    }
+    !identical(before$state, after$state)
 }

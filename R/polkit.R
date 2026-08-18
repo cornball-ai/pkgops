@@ -108,19 +108,48 @@ set_pkcheck <- .pkgops_pkcheck$set_pkcheck
            "3" = "approval_required", "check_failed")
 }
 
-## Decide whether a commit may proceed, per contract 4.4. In INTERACTIVE mode the
-## check is deferred to the pkexec prompt at the entrypoint spawn, so this returns
-## "authorized" WITHOUT running pkcheck (a cancelled prompt becomes a known-false
-## unauthorized outcome on the effect intent later). In MACHINE mode it runs the
-## non-interactive pkcheck for the verb's action and maps the result. The
+## The `authorized_via` provenance carried into the durable record (section 2.5 of
+## the VM-gate plan). It is DECIDED here, where the authorization is decided, from state
+## that is complete at this point -- never reconstructed downstream from partial
+## state. "pkexec": the interactive prompt authenticates at the privileged spawn.
+## "autonomous": a machine-mode grant (rc 0) of an autonomous-class verb
+## (apt.update/apt.hold) -- it identifies the authorization CLASS, not which polkit
+## rule fired, since pkcheck does not reveal the rule (the runix-apt-autonomous rule
+## is the only non-interactive grant for those verbs). "pkcheck": a machine-mode
+## grant of a normally-admin verb.
+.authorized_via <- function(verb_spec, interactive) {
+    if (isTRUE(interactive)) {
+        "pkexec"
+    } else if (isTRUE(verb_spec$autonomous)) {
+        "autonomous"
+    } else {
+        "pkcheck"
+    }
+}
+
+## Decide whether a commit may proceed, per contract 4.4, returning
+## list(decision, via): `decision` is the machine-mode decision vocabulary
+## (.POLKIT_DECISIONS); `via` is the authorized_via provenance, set on an
+## authorized decision and NA on a refusal (nothing was authorized). In INTERACTIVE
+## mode the check is deferred to the pkexec prompt at the entrypoint spawn, so this
+## returns "authorized" WITHOUT running pkcheck (a cancelled prompt becomes a
+## known-false unauthorized outcome on the effect intent later). In MACHINE mode it
+## runs the non-interactive pkcheck for the verb's action and maps the result. The
 ## autonomous verbs (apt.update/apt.hold) need no special-casing: the
-## runix-apt-autonomous polkit rule grants members rc 0 through the SAME check,
-## and a non-member falls through to a refusal like any other verb.
+## runix-apt-autonomous polkit rule grants members rc 0 through the SAME check, and
+## a non-member falls through to a refusal like any other verb.
 .authorize <- function(verb_spec, interactive) {
     if (isTRUE(interactive)) {
-        return("authorized")
+        return(list(decision = "authorized",
+                    via = .authorized_via(verb_spec, interactive = TRUE)))
     }
     action <- .polkit_action(verb_spec$request_verb)
     rc <- pkcheck_fn()(action)
-    .pkcheck_decision(rc)
+    decision <- .pkcheck_decision(rc)
+    via <- if (identical(decision, "authorized")) {
+        .authorized_via(verb_spec, interactive = FALSE)
+    } else {
+        NA_character_
+    }
+    list(decision = decision, via = via)
 }
