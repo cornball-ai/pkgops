@@ -1,7 +1,7 @@
 Package: pkgops
 Type: Package
 Title: Unprivileged Issuer for 'APT' Package-State Mutations
-Version: 0.0.1.5
+Version: 0.0.1.6
 Date: 2026-08-18
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"), email = "troy@cornball.ai",
@@ -19,7 +19,7 @@ License: MIT + file LICENSE
 OS_type: unix
 SystemRequirements: pkgexec (provides the unprivileged 'runix-apt-preview'
     planner on PATH; only needed for live previews, not for the test suite)
-Imports: runix (>= 0.0.1.12), janssonr (>= 0.0.1.1)
+Imports: runix (>= 0.0.1.12), janssonr (>= 0.0.1.1), pkgstate (>= 0.0.1.9)
 Suggests: tinytest
 Additional_repositories: https://cornball-ai.github.io/drat
 Encoding: UTF-8
