@@ -53,9 +53,13 @@ jobs:
 
       # runix is pkgops's other Import and only source dependency; install it
       # from the public sibling repo (it compiles the AF_UNIX audit-broker
-      # client). tinytest is the one test dep.
+      # client and links libjansson for in-C effect-receipt extraction, so its
+      # configure needs libjansson-dev at compile time). pkgops itself has no C
+      # code; this dev lib is only for building runix from source here. tinytest
+      # is the one test dep.
       - name: Install runix (public sibling Import) + tinytest
         run: |
+          sudo apt-get install -y libjansson-dev
           git clone --depth 1 https://github.com/cornball-ai/runix.git \
             "${RUNNER_TEMP}/runix"
           R CMD INSTALL "${RUNNER_TEMP}/runix"
