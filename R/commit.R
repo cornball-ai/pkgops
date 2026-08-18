@@ -175,11 +175,45 @@
     stop(cond)
 }
 
+## The exported per-verb commit entrypoint's shared body (R/commit_api.R). It adds
+## the two checks the verb-agnostic .commit_session cannot make -- the argument is
+## a pkgops_preview, and its verb is the one THIS function commits (apt_install()
+## must never commit an apt.remove plan) -- then delegates. Both run BEFORE any
+## capability call or intent; .commit_session then enforces committability
+## (advisory_verdict == "ok", a bound digest) and drives the lifecycle. The
+## plan_hash the preview carries is the integrity authority: the privileged helper
+## re-validates it under the dpkg lock, so a drifted plan is refused there, never
+## applied -- pkgops does not (and cannot) re-derive it at the R layer.
+.commit_verb <- function(expected_verb, preview, lock_timeout, deadline_ms,
+                         interactive, socket_path) {
+    if (!inherits(preview, "pkgops_preview")) {
+        stop_pkgops("commit requires a pkgops_preview (from ",
+                    sub("^apt\\.", "apt_", expected_verb), "_preview())",
+                    class = "pkgops_bad_request")
+    }
+    if (!identical(preview$verb, expected_verb)) {
+        got <- if (.is_scalar_str(preview$verb)) {
+            shQuote(preview$verb)
+        } else {
+            "<malformed>"
+        }
+        stop_pkgops("verb/preview mismatch: ",
+                    sub("^apt\\.", "apt_", expected_verb),
+                    "() cannot commit a preview for ", got,
+                    class = "pkgops_bad_request",
+                    data = list(expected_verb = expected_verb,
+                                preview_verb = preview$verb))
+    }
+    .commit_session(preview, socket_path = socket_path,
+                    interactive = interactive, lock_timeout = lock_timeout,
+                    deadline_ms = deadline_ms)
+}
+
 ## Drive the branched commit lifecycle for one committable preview and return the
 ## pkgops_outcome (success) or SIGNAL the mapped condition (failure), with the
-## outcome ALWAYS written before the signal (4.8). Internal for now -- the public
-## per-verb API that wraps this (with the preview {verb,resource,plan_hash} match
-## check) lands once pkgstate verification completes the lifecycle.
+## outcome ALWAYS written before the signal (4.8). Verb-agnostic: it reads the verb
+## from the preview. The exported per-verb apt_<verb>() wrappers (R/commit_api.R)
+## reach it through .commit_verb(), which adds the verb/preview match check.
 .commit_session <- function(preview, socket_path = .PKGOPS_BROKER_SOCKET,
                             interactive = FALSE, lock_timeout = 0L,
                             deadline_ms = 120000L) {
