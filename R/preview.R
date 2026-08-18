@@ -21,6 +21,20 @@
 .PREVIEW_HASH_STATUSES <- c("ok", "package_not_owned", "held",
                             "protected_package")
 
+## The exact top-level key set the planner always emits (unavailable fields are
+## JSON null, but the key is still present) -- checked so a reply with a missing
+## or extra field is refused, never partially trusted.
+.PREVIEW_KEYS <- c("schema_version", "status", "verb", "packages",
+                   "plan_schema", "resource", "plan_hash", "records",
+                   "detail")
+
+## The statuses whose reply reflects a parsed-and-resolved request: they echo the
+## verb, echo the requested packages, and carry a (possibly empty) resource
+## string (pkgexec tools/preview.cc emit sites). schema_invalid is the sole
+## pre-parse status -- its verb and resource are null and are not echoed.
+.PREVIEW_RESOLVED <- c("ok", "no_op", "package_not_owned", "held",
+                       "protected_package")
+
 .or_na_chr <- function(x) {
     if (is.null(x)) {
         NA_character_
@@ -29,12 +43,28 @@
     }
 }
 
-.as_chr_vec <- function(x) {
-    if (is.null(x)) {
-        character(0)
-    } else {
-        as.character(unlist(x, use.names = FALSE))
-    }
+## Strict scalar predicates for validating the reply. A JSON number that is not
+## integer-VALUED must never be truncated into the schema: `.exact_int(1.5, 1L)`
+## is FALSE, so a `plan_schema` of 1.5 is refused rather than silently read as 1.
+.exact_int <- function(x, val) {
+    is.numeric(x) && length(x) == 1L && is.finite(x) && x == floor(x) &&
+    x == val
+}
+.is_scalar_str <- function(x) {
+    is.character(x) && length(x) == 1L && !is.na(x)
+}
+.is_str_or_null <- function(x) {
+    is.null(x) || .is_scalar_str(x)
+}
+## janssonr decodes a JSON array to an unnamed list (any length, including 0 and
+## 1) and a JSON scalar to an atomic vector, so `is.list` with no names is an
+## exact "this is a JSON array" test -- a scalar `"nginx"` where an array is
+## required fails it.
+.is_json_array <- function(x) {
+    is.list(x) && (length(x) == 0L || is.null(names(x)))
+}
+.is_json_object <- function(x) {
+    is.list(x) && !is.null(names(x)) && all(nzchar(names(x)))
 }
 
 ## A planner reply the issuer cannot trust (unparseable, wrong shape, exit code
@@ -65,22 +95,53 @@
     if (!is.list(parsed) || is.null(names(parsed))) {
         .preview_bad("response is not a JSON object")
     }
-    if (!is.numeric(parsed$schema_version) ||
-        length(parsed$schema_version) != 1L ||
-        as.integer(parsed$schema_version) != 1L) {
-        .preview_bad("schema_version is not 1")
+    ## exact top-level key set: neither a missing nor an extra field is tolerated
+    if (length(parsed) != length(.PREVIEW_KEYS) ||
+        !setequal(names(parsed), .PREVIEW_KEYS)) {
+        .preview_bad("response keys are not exactly the nine planner fields")
     }
+    ## schema_version is the integer-valued 1 (1.5 must NOT truncate to 1)
+    if (!.exact_int(parsed$schema_version, 1L)) {
+        .preview_bad("schema_version is not integer 1")
+    }
+    ## status is a scalar string from the closed nine
     status <- parsed$status
-    if (!is.character(status) || length(status) != 1L ||
-        !status %in% .PREVIEW_STATUSES) {
+    if (!.is_scalar_str(status) || !status %in% .PREVIEW_STATUSES) {
         .preview_bad("status is not one of the nine planner statuses")
     }
-    if (!identical(parsed$verb, verb_spec$request_verb)) {
-        .preview_bad("verb echo does not match the request")
+    ## field types: strings where the planner emits strings, null tolerated only
+    ## where it emits null (verb/resource are null for schema_invalid)
+    if (!.is_str_or_null(parsed$verb)) {
+        .preview_bad("verb is not a string or null")
     }
-    got <- .as_chr_vec(parsed$packages)
-    if (length(got) != length(req_packages) || !setequal(got, req_packages)) {
-        .preview_bad("packages echo does not match the request")
+    if (!.is_str_or_null(parsed$resource)) {
+        .preview_bad("resource is not a string or null")
+    }
+    if (!.is_str_or_null(parsed$plan_hash)) {
+        .preview_bad("plan_hash is not a string or null")
+    }
+    if (!.is_str_or_null(parsed$detail)) {
+        .preview_bad("detail is not a string or null")
+    }
+    ## plan_schema is either null or the integer-valued 1 (never truncated)
+    if (!(is.null(parsed$plan_schema) || .exact_int(parsed$plan_schema, 1L))) {
+        .preview_bad("plan_schema is neither null nor integer 1")
+    }
+    ## packages must be an actual JSON array of scalar strings, not a scalar
+    if (!.is_json_array(parsed$packages) ||
+        !all(vapply(parsed$packages, .is_scalar_str, logical(1)))) {
+        .preview_bad("packages is not a JSON array of strings")
+    }
+    ## records must be an actual JSON array of JSON objects. The verb-specific
+    ## field grammar within each record (transaction / hold / configure / update)
+    ## is NOT validated here: in this preview slice the schema-1 plan_hash is the
+    ## integrity authority and the records are advisory, carried verbatim. The
+    ## per-field record grammar is deferred to the commit slice, where records
+    ## feed pkgstate verification and the exact shape becomes load-bearing; it
+    ## will be pinned there against real (VM-exercised) planner output.
+    if (!.is_json_array(parsed$records) ||
+        !all(vapply(parsed$records, .is_json_object, logical(1)))) {
+        .preview_bad("records is not a JSON array of objects")
     }
     ## the planner exits 0 exactly for ok / no_op
     ok_exit <- status %in% c("ok", "no_op")
@@ -91,18 +152,39 @@
     ## a digest is present exactly for the four hash-bearing statuses
     has_hash <- status %in% .PREVIEW_HASH_STATUSES
     if (has_hash) {
-        if (is.null(parsed$plan_hash) || !is.character(parsed$plan_hash) ||
+        if (is.null(parsed$plan_hash) ||
             !grepl("^[0-9a-f]{64}$", parsed$plan_hash)) {
             .preview_bad("plan_hash missing or not 64 lowercase hex for '",
                          status, "'")
         }
-        if (!is.numeric(parsed$plan_schema) ||
-            length(parsed$plan_schema) != 1L ||
-            as.integer(parsed$plan_schema) != 1L) {
+        if (!.exact_int(parsed$plan_schema, 1L)) {
             .preview_bad("plan_schema is not 1 for '", status, "'")
         }
-    } else if (!is.null(parsed$plan_hash)) {
-        .preview_bad("plan_hash present for the non-digest status '", status, "'")
+    } else {
+        if (!is.null(parsed$plan_hash)) {
+            .preview_bad("plan_hash present for the non-digest status '",
+                         status, "'")
+        }
+        if (!is.null(parsed$plan_schema)) {
+            .preview_bad("plan_schema present for the non-digest status '",
+                         status, "'")
+        }
+    }
+    ## a resolved status echoes the verb and the requested packages IN ORDER, and
+    ## carries a resource; schema_invalid is pre-parse (verb null, packages [],
+    ## resource null) and is not echoed -- it fails closed below via its status.
+    if (status != "schema_invalid") {
+        if (!identical(parsed$verb, verb_spec$request_verb)) {
+            .preview_bad("verb echo does not match the request")
+        }
+        got <- as.character(unlist(parsed$packages, use.names = FALSE))
+        if (!identical(got, req_packages)) {
+            .preview_bad("packages echo does not match the request ",
+                         "(order-sensitive)")
+        }
+    }
+    if (status %in% .PREVIEW_RESOLVED && is.null(parsed$resource)) {
+        .preview_bad("resource is null for the resolved status '", status, "'")
     }
     parsed$status <- status
     parsed

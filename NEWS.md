@@ -12,11 +12,23 @@ for the Runix framework.
 * Previews are **advisory only**: they open no broker intent, take no `dpkg`
   lock, and mint nothing. The authoritative resolution happens under the lock at
   commit time.
-* The planner reply is strictly validated (schema, verb/packages echo, exit-code
-  consistency, digest-present-iff-expected); anything untrustworthy fails closed
-  as `runix_preview_failed`. Non-success plans raise typed conditions on the
-  shared runix taxonomy: `runix_resolve_failed`, `runix_not_owned`,
-  `runix_held`, `runix_protected`, `runix_dpkg_broken`, `runix_helper_internal`.
+* The planner reply is strictly validated: an exact top-level key set (no missing
+  or extra field), integer-valued `schema_version` and `plan_schema` (a fractional
+  `1.5` is refused, never truncated to `1`), actual JSON arrays for `packages` and
+  `records` (a scalar is refused), an order-sensitive `packages` echo against the
+  request, per-status digest presence (`plan_hash`/`plan_schema` present exactly
+  for `ok` and the three policy refusals), and exit-code consistency. Anything
+  untrustworthy fails closed as `runix_preview_failed`. Non-success plans raise
+  typed conditions on the shared runix taxonomy: `runix_resolve_failed`,
+  `runix_not_owned`, `runix_held`, `runix_protected`, `runix_dpkg_broken`,
+  `runix_helper_internal`.
+* Boundary: `records` is validated structurally (a JSON array of JSON objects),
+  but the verb-specific field grammar within each record (transaction / hold /
+  configure / update) is deliberately **not** validated in this preview slice.
+  The schema-1 `plan_hash` is the integrity authority here and the records are
+  advisory. The per-field record grammar is pinned in the commit slice, where
+  records feed `pkgstate` verification and are exercised against real planner
+  output in the disposable-VM gate.
 * The commit lifecycle (effect-session custody, polkit authorization, and
   `pkgstate` verification) is a later, separately reviewed slice; no
   mutation-capable code path exists in this release.

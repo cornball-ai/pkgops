@@ -125,7 +125,20 @@ bad_cases <- list(
                                         plan_hash = quo(H)), exit = 1L),
     bad_hash         = list(json = resp("ok", plan_schema = "1",
                                         plan_hash = quo("xyz")), exit = 0L),
-    unknown_status   = list(json = resp("frobnicated"),     exit = 1L))
+    unknown_status   = list(json = resp("frobnicated"),     exit = 1L),
+    # a fractional plan_schema must be refused, never truncated to 1
+    schema_fractional= list(json = resp("ok", plan_schema = "1.5",
+                                        plan_hash = quo(H)), exit = 0L),
+    # a digest field on a non-digest status is refused (both hash and schema)
+    schema_on_error  = list(json = resp("resolve_failed", plan_schema = "1"),
+                            exit = 1L),
+    # packages / records must be ACTUAL JSON arrays, not scalars or wrong element types
+    scalar_packages  = list(json = resp("ok", pkgs = '"nginx"', plan_schema = "1",
+                                        plan_hash = quo(H)), exit = 0L),
+    records_not_array= list(json = resp("ok", records = '"x"', plan_schema = "1",
+                                        plan_hash = quo(H)), exit = 0L),
+    records_nonobject= list(json = resp("ok", records = '["x"]', plan_schema = "1",
+                                        plan_hash = quo(H)), exit = 0L))
 for (nm in names(bad_cases)) {
     bc <- bad_cases[[nm]]
     old <- pkgops:::set_runner(mk(bc$json, exit = bc$exit))
@@ -137,12 +150,47 @@ for (nm in names(bad_cases)) {
 }
 
 ## ---- a schema_version other than 1 is refused -----------------------------
-old <- pkgops:::set_runner(mk(paste0('{"schema_version":2,"status":"ok",',
-    '"verb":"apt.install","packages":["nginx"],"plan_schema":1,',
-    '"resource":"nginx","plan_hash":', quo(H), ',"records":[],"detail":null}')))
-e <- tryCatch(pkgops::apt_install_preview("nginx"), error = identity)
+ok_line <- function(sv = "1", extra = "", drop = character()) {
+    fields <- c(schema_version = sv, status = '"ok"', verb = '"apt.install"',
+                packages = '["nginx"]', plan_schema = "1", resource = '"nginx"',
+                plan_hash = quo(H), records = "[]", detail = "null")
+    fields <- fields[!(names(fields) %in% drop)]
+    body <- paste(sprintf('"%s":%s', names(fields), fields), collapse = ",")
+    paste0("{", body, if (nzchar(extra)) paste0(",", extra) else "", "}")
+}
+refuse <- function(json, exit = 0L) {
+    old <- pkgops:::set_runner(mk(json, exit = exit))
+    e <- tryCatch(pkgops::apt_install_preview("nginx"), error = identity)
+    pkgops:::set_runner(old)
+    e
+}
+
+# schema_version 2, and the integer-truncation regression: 1.5 must be refused
+expect_inherits(refuse(ok_line(sv = "2")), "runix_preview_failed")
+expect_inherits(refuse(ok_line(sv = "1.5")), "runix_preview_failed")
+
+## ---- exact top-level key set: a missing or extra field is refused ---------
+expect_inherits(refuse(ok_line(drop = "detail")), "runix_preview_failed")
+expect_inherits(refuse(ok_line(extra = '"surprise":1')), "runix_preview_failed")
+
+## ---- the packages echo is order-sensitive (identical, not a set) ----------
+two <- function(echo_pkgs) {
+    resp("ok", pkgs = echo_pkgs, resource = '"curl,nginx"',
+         plan_schema = "1", plan_hash = quo(H))
+}
+# reordered echo -> refused
+old <- pkgops:::set_runner(mk(two('["nginx","curl"]')))
+e <- tryCatch(pkgops::apt_install_preview(c("curl", "nginx")), error = identity)
 pkgops:::set_runner(old)
 expect_inherits(e, "runix_preview_failed")
+
+# same order -> accepted, packages carried verbatim in request order
+old <- pkgops:::set_runner(mk(two('["curl","nginx"]')))
+p2 <- pkgops::apt_install_preview(c("curl", "nginx"))
+pkgops:::set_runner(old)
+expect_inherits(p2, "pkgops_preview")
+expect_equal(p2$packages, c("curl", "nginx"))
+expect_true(grepl('"packages":["curl","nginx"]', seen$input, fixed = TRUE))
 
 ## ---- a missing planner binary fails closed, typed -------------------------
 # (default runner, no injection: /usr/bin/runix-apt-preview is absent here)
