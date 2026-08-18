@@ -102,13 +102,32 @@
         stop_pkgops("commit requires a pkgops_preview (from apt_<verb>_preview())",
                     class = "pkgops_bad_request")
     }
-    ## Only an `ok` preview binds a plan; a no_op (or any hashless preview) has
-    ## nothing to apply and is refused before anything is opened.
-    if (is.na(preview$plan_hash) || is.na(preview$plan_schema)) {
-        stop_pkgops("this preview carries no plan to commit (nothing to apply)",
+    ## Only an `ok` preview is committable. This gate is the AUTHORITATIVE
+    ## committability check, and a plan-hash-presence check is NOT a substitute:
+    ## the three policy-refusal statuses (package_not_owned / held /
+    ## protected_package) resolve a plan and carry a valid plan_hash BY DESIGN
+    ## (pkgexec tools/preview.cc), so a refusal with a real digest would sail past
+    ## a hash check. In the normal flow .preview() raises for any non-ok status,
+    ## so a refusal never becomes a pkgops_preview -- but a hand-built or mutated
+    ## object must still be refused here, before any capability call or intent.
+    if (!identical(preview$advisory_verdict, "ok")) {
+        vd <- if (.is_scalar_str(preview$advisory_verdict)) {
+            preview$advisory_verdict
+        } else {
+            "<malformed>"
+        }
+        stop_pkgops("only an 'ok' preview is committable; this one is '", vd,
+                    "' (a no_op or a policy refusal is never committable)",
                     class = "pkgops_bad_request",
                     data = list(verb = preview$verb,
                                 advisory_verdict = preview$advisory_verdict))
+    }
+    ## defensive: an `ok` preview always carries its bound digest (the planner
+    ## reply validator guarantees it); refuse a malformed one rather than open an
+    ## intent with no plan to bind.
+    if (is.na(preview$plan_hash) || is.na(preview$plan_schema)) {
+        stop_pkgops("this 'ok' preview carries no plan digest to commit",
+                    class = "pkgops_bad_request", data = list(verb = preview$verb))
     }
     ops <- session_ops()
 

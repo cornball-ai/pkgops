@@ -201,6 +201,26 @@ r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)),
 expect_inherits(r, "pkgops_bad_request")
 expect_equal(length(lg$seq), 0L)                         # nothing minted
 
+## ---- a HASH-BEARING policy refusal is NOT committable -----------------------
+## held / protected_package / package_not_owned resolve a plan and carry a valid
+## plan_hash by design, so the digest-presence check is not enough: the
+## advisory_verdict=="ok" gate must refuse a hand-built/mutated refusal preview
+## BEFORE any capability call opens an effect-required intent.
+for (verdict in c("held", "protected_package", "package_not_owned")) {
+    lg <- newlog()
+    r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)),
+                    preview = mkprev(advisory_verdict = verdict))  # valid hash H
+    expect_inherits(r, "pkgops_bad_request")
+    expect_equal(length(lg$seq), 0L)                     # no capability, nothing opened
+}
+
+## a preview with a malformed (non-string) verdict is refused too
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)),
+                preview = mkprev(advisory_verdict = NA_character_))
+expect_inherits(r, "pkgops_bad_request")
+expect_equal(length(lg$seq), 0L)
+
 ## ---- a non-preview argument is refused -------------------------------------
 lg <- newlog()
 r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = list(verb = "apt.install"))
