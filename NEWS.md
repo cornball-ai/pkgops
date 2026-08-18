@@ -1,3 +1,31 @@
+# pkgops 0.0.1.8
+
+Commit lifecycle (slice 3b): the **exported per-verb `apt_<verb>()` commit API**
+(§4.1 / §5). This is the increment that makes `pkgops` **mutation-capable** -- the
+first release with a public code path that changes system state.
+
+* Nine exported entrypoints -- `apt_install`, `apt_remove`, `apt_purge`,
+  `apt_hold`, `apt_unhold`, `apt_update`, `apt_upgrade`, `apt_dist_upgrade`,
+  `apt_configure` -- each committing the `pkgops_preview` its
+  `apt_<verb>_preview()` twin produced. A commit binds **only** that preview: its
+  `plan_hash` is what the privileged helper re-validates under the `dpkg` lock, so
+  a plan that drifted since the preview is refused there, never applied.
+* Each `apt_<verb>()` refuses, **before anything is opened**, a preview for a
+  different verb (an `apt.remove` preview handed to `apt_install()` is a
+  `pkgops_bad_request` -- a verb/preview mismatch), a non-`ok` preview (a `no_op`
+  or a policy refusal is never committable), and any argument that is not a
+  `pkgops_preview`. It then drives the full `.commit_session` lifecycle
+  (capability, polkit, open, commit, verify, write-outcome, signal).
+* `interactive` defaults to `interactive()`: an R console commits through the
+  `pkexec` prompt, a script or CI run commits in machine mode (a non-interactive
+  `pkcheck`, whose denial or approval challenge is a durably-audited refusal, never
+  a prompt). `lock_timeout` / `deadline_ms` / `socket_path` pass through.
+* The `DESCRIPTION` no longer says mutation is out of scope.
+* Still deferred to the **VM-gated increment**: the durable outcome-record grammar
+  (the `observed`/`changed` post-state fields the verdict feeds) and the real
+  broker/polkit proof; and, if wanted, the combined plan-and-commit `apt_<verb>_run()`
+  convenience (definable purely in terms of the two-call form).
+
 # pkgops 0.0.1.7
 
 Commit lifecycle (slice 3b): **wire verification into `.commit_session`** (§4.3
