@@ -77,5 +77,7 @@
         stop_pkgops("invalid package name: ", shQuote(packages[bad[1L]]),
                     class = "pkgops_bad_request")
     }
-    packages
+    ## drop any names so the request encodes as a JSON array (not an object) and
+    ## the order-sensitive packages-echo check compares clean character vectors
+    unname(packages)
 }
