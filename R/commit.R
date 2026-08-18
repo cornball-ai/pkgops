@@ -1,13 +1,14 @@
 ## The commit-session orchestrator: the branched commit lifecycle of the contract
 ## (pkgops-plan.md 4), wiring runix's exported effect-session API to the pure
-## classifier (R/classify.R) and the polkit decision (R/polkit.R). Steps wired:
-## 1 capability, 2 authorization (the polkit branch + the plain-intent terminal
-## refusal), 3-5 open/commit/classify, 7 write_outcome, 8 return/signal, with the
-## outcome-closed-before-signal discipline (4.8). ONE step remains DEFERRED to its
-## own later increment and is marked below: pkgstate verification (contract 4.7).
-## Until it lands there is no exported per-verb apt_<verb>() commit entrypoint --
-## an issuer cannot verify truthfully yet, so the mutation-capable path stays
-## internal (.commit_session) and hermetic (fake session-ops + fake pkcheck).
+## classifier (R/classify.R), the polkit decision (R/polkit.R), and pkgstate
+## verification (R/verify.R). Steps wired: 1 capability, 2 authorization (the
+## polkit branch + the plain-intent terminal refusal), 3-5 open/commit/classify,
+## 6 verification (capture the verdict on the outcome, never raise), 7
+## write_outcome, 8 return/signal, with the outcome-closed-before-signal
+## discipline (4.8). The mutation-capable path stays internal (.commit_session)
+## and hermetic (fake session-ops + fake pkcheck + fake pkgstate reader) until the
+## exported per-verb apt_<verb>() commit entrypoint (its own later increment,
+## which adds the preview {verb,resource,plan_hash} match check).
 
 ## The broker's well-known AF_UNIX socket (matches runix's effect_capability
 ## default). A caller may override for a test/staging broker.
@@ -60,6 +61,30 @@
                             correlation_id = outcome$correlation_id,
                             effect_issued = outcome$effect_issued,
                             persist_status = wr$status, detail = detail))
+}
+
+## step 6 (contract 4.7): cross-check the committed preview's resolved records
+## against native ground truth and CAPTURE the verdict into the outcome. This is
+## OBSERVATIONAL -- it never changes the close/open decision and never raises: a
+## disagreeing post-state is `verified = FALSE` + a detail on the outcome, not a
+## signal. So the outcome is still written (step 7) and outcome-before-signal
+## holds. .verify() reads only the plan (preview) and the ground truth, never the
+## helper's self-report (4.7), and by the time this runs the commit has applied,
+## so the reader observes the POST-state.
+##
+## .verify() already normalizes malformed reader/record data to verified = FALSE
+## without raising; the extra tryCatch is belt-and-suspenders so a residual error
+## can never abort before write_outcome. The durable-record post-state fields
+## (observed/changed) that carry this verdict to the broker are the VM-gated
+## increment's; here the verdict lands on the returned outcome object only.
+.verify_and_capture <- function(outcome, preview) {
+    v <- tryCatch(.verify(preview), error = function(e) {
+        list(verified = FALSE,
+             detail = paste0("verification error: ", conditionMessage(e)))
+    })
+    outcome$verified <- v$verified
+    outcome$verify_detail <- v$detail
+    outcome
 }
 
 ## Run the commit and classify it into list(outcome, condition, leave_open),
@@ -234,9 +259,17 @@
     decided <- .commit_and_classify(ops, session, preview, lock_timeout,
                                     deadline_ms)
 
-    ## step 6 -- pkgstate VERIFICATION: DEFERRED to its own increment. Until then
-    ## `verified` stays NA (new_pkgops_outcome's default); a clean helper status
-    ## is NOT yet cross-checked against the post-state.
+    ## step 6 -- pkgstate VERIFICATION (contract 4.7). Only on the success path
+    ## (is.null(condition): an ok/no_op that will be RETURNED, not signaled):
+    ## cross-check the committed preview against native ground truth and capture
+    ## the verdict onto the outcome. A known failure already carries its own
+    ## condition and a left-open effect is unknown, so neither has a trustworthy
+    ## post-state to check. This is observational -- never raises, never changes
+    ## close/open -- so the outcome is still written below and the
+    ## outcome-before-signal order holds.
+    if (is.null(decided$condition)) {
+        decided$outcome <- .verify_and_capture(decided$outcome, preview)
+    }
 
     ## step 7 -- close the durable intent, UNLESS the effect is genuinely unknown
     ## (then the intent is left open for reconciliation, 4.8).

@@ -45,7 +45,7 @@ reviewed increments** — hold at each increment before the next.
   terminal outcome (only signaled as closed when `audit_persisted == TRUE` with a
   valid broker cid, `.valid_broker_cid`); `check_failed` fails closed with nothing
   recorded.
-- **Increment 5a (this): pkgstate verification predicates** (`R/verify.R`) —
+- **Increment 5a (merged): pkgstate verification predicates** (`R/verify.R`) —
   `.verify(preview, reader)` checks every **resolved record** of a committed
   preview against native ground truth, per verb (§6.3): transaction verbs by each
   record's `action` (install/upgrade/downgrade → installed at `to_version`; remove
@@ -53,19 +53,27 @@ reviewed increments** — hold at each increment before the next.
   surviving `config-files` is a *failed* purge) via `dpkg_installed()`; configure →
   fully `installed`; hold/unhold → the `dpkg_selections()` want reads back; update
   → `NA`. **Independent of the helper's status** (reads only the plan + ground
-  truth); returns `(verified TRUE/FALSE/NA, detail)`. pkgstate reads go through an
-  injectable reader seam (`pkgstate_reader()`/`set_pkgstate_reader`,
-  hermetic-test-only). **`pkgstate` is now an `Imports`** (the default reader uses
-  it). Record grammar/post-state pinned to pkgexec 0.0.3 + pkgstate 0.0.1.9.
-- **Still NOT started** (later increments, each its own review): **5b — wire
-  `.verify()` into `.commit_session` step 6** (for a success status, verify and
-  **capture** the verdict into the outcome's `verified`/`verify_detail` — never
-  raise; a verification failure still writes the outcome), and then the **exported
+  truth); returns `(verified TRUE/FALSE/NA, detail)`. `architecture` is required by
+  the txn/configure grammar (a missing arch fails, never wildcard-matches). pkgstate
+  reads go through an injectable reader seam
+  (`pkgstate_reader()`/`set_pkgstate_reader`, hermetic-test-only). **`pkgstate` is
+  now an `Imports`** (the default reader uses it). Record grammar/post-state pinned
+  to pkgexec 0.0.3 + pkgstate 0.0.1.9.
+- **Increment 5b (this): wire verification into `.commit_session` step 6** —
+  after commit + classify, on the **success path only** (`is.null(condition)`: an
+  `ok`/`no_op` that will be returned), `.verify_and_capture()` runs `.verify()` and
+  captures `verified`/`verify_detail` onto the returned outcome. **Observational**:
+  never raises, never changes close/open; a disagreeing post-state is
+  `verified = FALSE` + a detail, not a signal, so the outcome is still written
+  (step 7) and outcome-before-signal holds. A known failure / left-open effect is
+  not verified. The reader stays behind the seam, so `.commit_session` is fully
+  hermetic (fake session-ops + fake pkcheck + fake reader).
+- **Still NOT started** (later increments, each its own review): the **exported
   per-verb `apt_<verb>()` API** (with the preview `{verb,resource,plan_hash}` match
   check). The durable outcome-record grammar (incl. the `observed`/`changed`
-  post-state fields verification now produces), the plain-intent refusal record
-  grammar, and the exact pkcheck rc→outcome split are pinned against a real
-  broker/polkit in the VM-gated increment.
+  post-state fields the verdict feeds), the plain-intent refusal record grammar,
+  and the exact pkcheck rc→outcome split are pinned against a real broker/polkit in
+  the VM-gated increment.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).

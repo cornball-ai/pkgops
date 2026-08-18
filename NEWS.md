@@ -1,3 +1,30 @@
+# pkgops 0.0.1.7
+
+Commit lifecycle (slice 3b): **wire verification into `.commit_session`** (§4.3
+step 6). The predicates from the previous increment now run inside the commit
+lifecycle, capturing the verdict onto the outcome. Still hermetic (the broker,
+`pkexec`/`pkcheck`, and the dpkg reader are all behind seams) and still internal
+-- the exported per-verb API is the last increment.
+
+* Step 6 runs after the commit + classify, on the **success path only** (an
+  `ok`/`no_op` that will be returned, not signaled): it cross-checks the
+  committed preview's resolved records against native ground truth via `.verify()`
+  and captures `verified` / `verify_detail` onto the returned `pkgops_outcome`.
+* Verification is **observational**: it never raises and never changes the
+  close/open decision. A disagreeing post-state is `verified = FALSE` plus a
+  detail on the outcome, **not** a signal, so the outcome is still written
+  (step 7) and the outcome-before-signal order (§4.8) holds. A known failure or a
+  left-open effect-unknown is not verified -- neither has a trustworthy
+  post-state.
+* Independence from the helper's self-report (§4.7) is now load-bearing in the
+  lifecycle: a clean `ok` whose post-state disagrees is a verification failure.
+* The dpkg reader stays behind the injectable seam, so `.commit_session` remains
+  fully hermetic (fake session-ops + fake `pkcheck` + fake reader). The
+  durable-record post-state fields that carry the verdict to the broker remain the
+  VM-gated increment; here the verdict lands on the outcome object only.
+* Still deferred: the exported per-verb `apt_<verb>()` commit entrypoint (with the
+  preview `{verb,resource,plan_hash}` match check).
+
 # pkgops 0.0.1.6
 
 Commit lifecycle (slice 3b): the **pkgstate verification predicates** (§4.7 /
