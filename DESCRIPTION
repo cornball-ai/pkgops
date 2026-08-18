@@ -1,0 +1,26 @@
+Package: pkgops
+Type: Package
+Title: Unprivileged Issuer for 'APT' Package-State Mutations
+Version: 0.0.1
+Date: 2026-08-17
+Authors@R: c(
+    person("Troy", "Hernandez", role = c("aut", "cre"), email = "troy@cornball.ai",
+           comment = c(ORCID = "0009-0005-4248-604X")),
+    person("cornball.ai", role = "cph"))
+Description: The unprivileged R issuer for authorized 'APT' package-state
+    mutations in the Runix system-administration framework. It plans a change
+    with the read-only 'runix-apt-preview' helper, returning a typed, advisory
+    preview whose plan digest binds exactly what a later commit would apply.
+    Mutation itself is out of scope of this release: previews open no intent,
+    take no lock, and mint nothing. Reads of installed state live in the sibling
+    'pkgstate'; the privileged effectors and the preview helper are shipped
+    separately by 'pkgexec'.
+License: MIT + file LICENSE
+OS_type: unix
+SystemRequirements: pkgexec (provides the unprivileged 'runix-apt-preview'
+    planner on PATH; only needed for live previews, not for the test suite)
+Imports: runix (>= 0.0.1.12), janssonr (>= 0.0.1.1)
+Suggests: tinytest
+Additional_repositories: https://cornball-ai.github.io/drat
+Encoding: UTF-8
+Config/roxygen2/version: 8.1.0

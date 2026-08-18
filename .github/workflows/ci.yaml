@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Least privilege: CI only reads the repo.
+permissions:
+  contents: read
+
+# One run per ref; a new push to a PR cancels the superseded run (but never a
+# master run, which we let finish).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  _R_CHECK_FORCE_SUGGESTS_: "false"
+
+# pkgops is the unprivileged apt-mutation issuer (OS_type: unix). This release
+# ships only the preview half: it spawns the read-only runix-apt-preview planner
+# and returns advisory objects. CI is Linux-only on purpose (the apt world is
+# Debian/Ubuntu). The suite drives every planner outcome through an injected
+# fake runner, so no privileged helper, no dpkg lock, and no broker are needed;
+# the pkgexec planner binary is deliberately NOT installed, and the missing-tool
+# path is asserted against its absence.
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup r-ci
+        uses: eddelbuettel/github-actions/r-ci@master
+        with:
+          backend: RAPT
+
+      # janssonr is an Import (strict JSON parsing of the planner reply); it
+      # ships as an apt binary from the cornball apt repository.
+      - name: Install janssonr from the cornball apt repository
+        run: |
+          sudo tee /etc/apt/sources.list.d/janssonr.sources > /dev/null <<'EOF'
+          Types: deb
+          URIs: https://cornball-ai.github.io/janssonr
+          Suites: noble
+          Components: main
+          Trusted: yes
+          Enabled: yes
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y r-cornball-janssonr
+
+      # runix is pkgops's other Import and only source dependency; install it
+      # from the public sibling repo (it compiles the AF_UNIX audit-broker
+      # client). tinytest is the one test dep.
+      - name: Install runix (public sibling Import) + tinytest
+        run: |
+          git clone --depth 1 https://github.com/cornball-ai/runix.git \
+            "${RUNNER_TEMP}/runix"
+          R CMD INSTALL "${RUNNER_TEMP}/runix"
+          Rscript -e 'install.packages("tinytest")'
+
+      - name: Install pkgops
+        run: R CMD INSTALL .
+
+      # at_home = TRUE for parity with the sibling packages; pkgops's suite is
+      # hermetic (fake runner, canned planner JSON) and spawns no binary, so this
+      # runs the full matrix without needing pkgexec on the runner.
+      - name: Tests (hermetic: fake planner, every status mapped)
+        run: |
+          Rscript -e 'r <- tinytest::test_package("pkgops", at_home = TRUE); n <- sum(!vapply(r, isTRUE, logical(1))); cat(length(r), "checks,", n, "failures\n"); quit(status = as.integer(n > 0))'
+
+      - name: R CMD check (CRAN cleanliness)
+        run: |
+          R CMD build --no-build-vignettes --no-manual .
+          _R_CHECK_FORCE_SUGGESTS_=false R CMD check --no-manual pkgops_*.tar.gz

@@ -1,0 +1,13 @@
+# tinyrox says don't edit this manually, but it can't stop you!
+
+export(apt_configure_preview)
+export(apt_dist_upgrade_preview)
+export(apt_hold_preview)
+export(apt_install_preview)
+export(apt_purge_preview)
+export(apt_remove_preview)
+export(apt_unhold_preview)
+export(apt_update_preview)
+export(apt_upgrade_preview)
+
+S3method(print,pkgops_preview)
