@@ -55,8 +55,8 @@
 apt_install <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                         interactive = base::interactive(),
                         socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.install", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.install", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
 
 #' @rdname apt_commit
@@ -64,8 +64,8 @@ apt_install <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
 apt_remove <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                        interactive = base::interactive(),
                        socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.remove", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.remove", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
 
 #' @rdname apt_commit
@@ -73,8 +73,8 @@ apt_remove <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
 apt_purge <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                       interactive = base::interactive(),
                       socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.purge", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.purge", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
 
 #' @rdname apt_commit
@@ -82,8 +82,8 @@ apt_purge <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
 apt_hold <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                      interactive = base::interactive(),
                      socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.hold", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.hold", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
 
 #' @rdname apt_commit
@@ -91,8 +91,8 @@ apt_hold <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
 apt_unhold <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                        interactive = base::interactive(),
                        socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.unhold", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.unhold", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
 
 #' @rdname apt_commit
@@ -100,8 +100,8 @@ apt_unhold <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
 apt_update <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                        interactive = base::interactive(),
                        socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.update", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.update", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
 
 #' @rdname apt_commit
@@ -109,13 +109,14 @@ apt_update <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
 apt_upgrade <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                         interactive = base::interactive(),
                         socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.upgrade", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.upgrade", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
 
 #' @rdname apt_commit
 #' @export
-apt_dist_upgrade <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
+apt_dist_upgrade <- function(preview, lock_timeout = 0L,
+                             deadline_ms = 120000L,
                              interactive = base::interactive(),
                              socket_path = .PKGOPS_BROKER_SOCKET) {
     .commit_verb("apt.dist_upgrade", preview, lock_timeout, deadline_ms,
@@ -127,6 +128,6 @@ apt_dist_upgrade <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
 apt_configure <- function(preview, lock_timeout = 0L, deadline_ms = 120000L,
                           interactive = base::interactive(),
                           socket_path = .PKGOPS_BROKER_SOCKET) {
-    .commit_verb("apt.configure", preview, lock_timeout, deadline_ms, interactive,
-                 socket_path)
+    .commit_verb("apt.configure", preview, lock_timeout, deadline_ms,
+                 interactive, socket_path)
 }
