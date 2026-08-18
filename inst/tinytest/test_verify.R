@@ -151,7 +151,7 @@ expect_identical(verify(p_unhold,
                         reader(selections = sel_df("nginx", "amd64",
                                                    "install")))$verified, TRUE)
 
-# multi-arch: both rows must agree with the intended selection
+# unqualified multi-arch: ALL rows must agree with the intended selection
 p_h2 <- prevv("apt.hold", list(hld("nginx", "install", "hold")))
 expect_identical(verify(p_h2, reader(selections = sel_df(c("nginx", "nginx"),
                                                          c("amd64", "i386"),
@@ -161,6 +161,30 @@ r <- verify(p_h2, reader(selections = sel_df(c("nginx", "nginx"),
                                              c("amd64", "i386"),
                                              c("hold", "install"))))
 expect_identical(r$verified, FALSE)               # one arch not held
+
+## ---- arch-QUALIFIED hold preserves target identity (pkg:arch) ---------------
+mixed <- reader(selections = sel_df(c("nginx", "nginx"), c("amd64", "i386"),
+                                    c("hold", "install")))
+# nginx:amd64 -> hold: matches ONLY the amd64 row (which is hold) -> TRUE
+expect_identical(verify(prevv("apt.hold", list(hld("nginx:amd64", "install",
+                                                   "hold"))), mixed)$verified, TRUE)
+# nginx:i386 -> hold: matches ONLY the i386 row (which is install) -> FALSE
+r <- verify(prevv("apt.hold", list(hld("nginx:i386", "install", "hold"))), mixed)
+expect_identical(r$verified, FALSE)
+expect_true(grepl("nginx:i386", r$detail))        # the qualified identity in the detail
+# nginx:amd64 but only an i386 selection row exists -> no match -> FALSE
+r <- verify(prevv("apt.hold", list(hld("nginx:amd64", "install", "hold"))),
+            reader(selections = sel_df("nginx", "i386", "hold")))
+expect_identical(r$verified, FALSE)
+expect_true(grepl("no selection", r$detail))
+# two qualified targets, each matched to its own arch
+p_q2 <- prevv("apt.hold", list(hld("nginx:amd64", "install", "hold"),
+                               hld("nginx:i386", "install", "hold")))
+expect_identical(verify(p_q2, reader(selections = sel_df(c("nginx", "nginx"),
+                                                         c("amd64", "i386"),
+                                                         c("hold", "hold"))))$verified,
+                 TRUE)
+expect_identical(verify(p_q2, mixed)$verified, FALSE)   # i386 is install
 
 ## ---- update: no observable post-state -> NA ---------------------------------
 r <- verify(prevv("apt.update", list()), reader())
@@ -176,6 +200,46 @@ expect_true(is.na(verify(prevv("apt.bogus", list(txn("x", "install"))),
 r <- verify(prevv("apt.install", list(list(architecture = "amd64"))), reader())
 expect_identical(r$verified, FALSE)
 expect_true(grepl("malformed", r$detail))
+
+## ---- .verify NEVER raises on malformed reader/record data -------------------
+## (contract: a post-state pkgops cannot read is not a pass -- it fails closed.)
+
+# an NA selection is a mismatch, not an if(NA) error
+r <- verify(p_hold, reader(selections = sel_df("nginx", "amd64", NA_character_)))
+expect_identical(r$verified, FALSE)
+
+# a non-list record (e.g. a stray scalar) -> malformed FAILURE, no error
+r <- verify(prevv("apt.install", list("not-a-record")), reader())
+expect_identical(r$verified, FALSE)
+expect_true(grepl("malformed", r$detail))
+r <- verify(prevv("apt.hold", list("not-a-record")), reader())
+expect_identical(r$verified, FALSE)
+
+# a reader frame missing an expected column -> normalized to FALSE, not an error
+bad_reader <- list(installed = function() data.frame(package = "nginx",
+                                                     stringsAsFactors = FALSE),
+                   selections = function(packages = NULL) sel_df())
+r <- verify(p_inst, bad_reader)
+expect_identical(r$verified, FALSE)
+expect_true(grepl("verification error", r$detail))
+
+# a reader whose installed() itself throws -> FALSE, not propagated
+boom_reader <- list(installed = function() stop("dpkg exploded"),
+                    selections = function(packages = NULL) sel_df())
+r <- verify(p_inst, boom_reader)
+expect_identical(r$verified, FALSE)
+expect_true(grepl("verification error", r$detail))
+
+# across a batch of hostile inputs, .verify always returns a well-formed list
+hostile <- list(
+    verify(prevv("apt.install", list(NA)), reader()),
+    verify(prevv("apt.hold", list(list(package = 42L))), reader()),
+    verify(prevv("apt.configure", list("x")), reader()),
+    verify(p_inst, boom_reader))
+for (h in hostile) {
+    expect_true(is.list(h) && all(c("verified", "detail") %in% names(h)))
+    expect_true(is.logical(h$verified) && length(h$verified) == 1L)
+}
 
 ## ---- the reader seam: set_pkgstate_reader installs/restores -----------------
 old <- set_reader(reader(inst_df("nginx", "1.2", "amd64", "installed")))

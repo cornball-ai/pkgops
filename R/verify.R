@@ -66,14 +66,48 @@ selections_default <- function(packages = NULL) {
 pkgstate_reader <- .pkgops_pkgstate_reader$pkgstate_reader
 set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
 
-## A scalar string from a decoded record field, or NA if absent/malformed.
+## A scalar string from a decoded record field, or NA if absent/malformed. Robust
+## to a non-list record (a malformed/hand-built preview): a non-list rec yields NA
+## for every field, so the record is treated as malformed rather than erroring.
 .rec_str <- function(rec, field) {
+    if (!is.list(rec)) {
+        return(NA_character_)
+    }
     v <- rec[[field]]
     if (.is_scalar_str(v)) {
         v
     } else {
         NA_character_
     }
+}
+
+## Split a record's `package` into (package, architecture). A hold record carries
+## no separate architecture field, so an arch-qualified target arrives inline as
+## `pkg:arch` -- split it and match both, preserving target identity. An
+## unqualified name has NA architecture (match by name across all its rows). A
+## malformed value (no scalar, or not exactly one `pkg:arch` split) yields NA
+## package, so the record fails as malformed rather than matching the wrong row.
+.split_pkg_arch <- function(x) {
+    if (!.is_scalar_str(x)) {
+        list(package = NA_character_, architecture = NA_character_)
+    } else if (grepl("^[^:]+:[^:]+$", x)) {
+        list(package = sub(":.*$", "", x), architecture = sub("^[^:]+:", "", x))
+    } else if (!grepl(":", x, fixed = TRUE)) {
+        list(package = x, architecture = NA_character_)
+    } else {
+        list(package = NA_character_, architecture = NA_character_)
+    }
+}
+
+## A reader frame must carry the columns the predicate reads; a frame that does
+## not is malformed and stops (the outer belt in .verify() turns that into a
+## verification FAILURE, never a wrong pass from a silently-absent column).
+.require_cols <- function(df, cols, what) {
+    if (!is.data.frame(df) || !all(cols %in% names(df))) {
+        stop(sprintf("%s reader frame is missing required columns (need %s)",
+                     what, paste(cols, collapse = ", ")))
+    }
+    invisible(df)
 }
 
 ## Fold per-record failure messages into a (verified, detail) verdict: any
@@ -142,6 +176,8 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
 ## by ITS OWN action (a verb pulls in dependency installs/removals/upgrades).
 .verify_txn <- function(records, reader) {
     inst <- reader$installed()
+    .require_cols(inst, c("package", "version", "architecture", "status"),
+                  "installed")
     fails <- character(0)
     for (rec in records) {
         pkg <- .rec_str(rec, "package")
@@ -166,6 +202,7 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
 ## `installed`); the record's `state` is the PRE-state that needed configuring.
 .verify_configure <- function(records, reader) {
     inst <- reader$installed()
+    .require_cols(inst, c("package", "architecture", "status"), "installed")
     fails <- character(0)
     for (rec in records) {
         pkg <- .rec_str(rec, "package")
@@ -190,28 +227,43 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
 }
 
 ## hold/unhold -> each target must read back in the intended dpkg selection
-## (`to_state` in {install, hold}). Matched by package name only: hold records
-## carry no architecture, so a multi-arch package is verified across all its
-## selection rows (all must agree -- fail closed).
+## (`to_state` in {install, hold}). An arch-qualified target (`pkg:arch`) matches
+## both package AND architecture, preserving its identity; an unqualified target
+## is verified across ALL its selection rows (every row must agree -- fail
+## closed). Comparisons are NA-safe: an NA selection is a mismatch, not an error.
 .verify_hold <- function(records, reader) {
-    pkgs <- vapply(records, function(r) .rec_str(r, "package"), character(1))
+    parsed <- lapply(records, function(rec) {
+        pa <- .split_pkg_arch(.rec_str(rec, "package"))
+        list(package = pa$package, architecture = pa$architecture,
+             want = .rec_str(rec, "to_state"))
+    })
+    pkgs <- unique(vapply(parsed, function(p) p$package, character(1)))
     sel <- reader$selections(pkgs[!is.na(pkgs)])
+    .require_cols(sel, c("package", "architecture", "selection"), "selections")
     fails <- character(0)
-    for (rec in records) {
-        pkg <- .rec_str(rec, "package")
-        want <- .rec_str(rec, "to_state")
-        if (is.na(pkg) || is.na(want)) {
+    for (p in parsed) {
+        if (is.na(p$package) || is.na(p$want)) {
             fails <- c(fails, "malformed hold record")
             next
         }
-        row <- sel[!is.na(sel$package) & sel$package == pkg,, drop = FALSE]
+        hit <- !is.na(sel$package) & sel$package == p$package
+        if (!is.na(p$architecture)) {
+            hit <- hit & !is.na(sel$architecture) &
+            sel$architecture == p$architecture
+        }
+        row <- sel[hit,, drop = FALSE]
+        label <- if (is.na(p$architecture)) {
+            p$package
+        } else {
+            paste0(p$package, ":", p$architecture)
+        }
         if (nrow(row) == 0L) {
             fails <- c(fails,
-                       sprintf("%s: no selection, expected %s", pkg, want))
-        } else if (!all(row$selection == want)) {
-            fails <- c(fails, sprintf("%s: selection %s, expected %s", pkg,
+                       sprintf("%s: no selection, expected %s", label, p$want))
+        } else if (!all(!is.na(row$selection) & row$selection == p$want)) {
+            fails <- c(fails, sprintf("%s: selection %s, expected %s", label,
                                       paste(unique(row$selection), collapse = "/"),
-                                      want))
+                                      p$want))
         }
     }
     .verify_result(fails)
@@ -236,7 +288,16 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
     if (!is.list(records) || length(records) == 0L) {
         return(list(verified = NA, detail = "no resolved records to verify"))
     }
-    switch(fam, txn = .verify_txn(records, reader),
-           configure = .verify_configure(records, reader),
-           hold = .verify_hold(records, reader))
+    ## Belt over the per-record fixes: any residual error from malformed reader
+    ## frames or records is normalized to a verification FAILURE (never raised),
+    ## so .verify's "never raises" contract holds against untrusted inputs. A
+    ## post-state pkgops cannot read is not a pass -- it fails closed.
+    tryCatch(
+             switch(fam, txn = .verify_txn(records, reader),
+                    configure = .verify_configure(records, reader),
+                    hold = .verify_hold(records, reader)),
+             error = function(e) {
+        list(verified = FALSE,
+             detail = paste0("verification error: ", conditionMessage(e)))
+    })
 }
