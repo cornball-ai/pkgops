@@ -67,7 +67,7 @@ jobs:
       # at_home = TRUE for parity with the sibling packages; pkgops's suite is
       # hermetic (fake runner, canned planner JSON) and spawns no binary, so this
       # runs the full matrix without needing pkgexec on the runner.
-      - name: Tests (hermetic: fake planner, every status mapped)
+      - name: Tests (hermetic fake planner, every status mapped)
         run: |
           Rscript -e 'r <- tinytest::test_package("pkgops", at_home = TRUE); n <- sum(!vapply(r, isTRUE, logical(1))); cat(length(r), "checks,", n, "failures\n"); quit(status = as.integer(n > 0))'
 
