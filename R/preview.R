@@ -28,13 +28,6 @@
                    "plan_schema", "resource", "plan_hash", "records",
                    "detail")
 
-## The statuses whose reply reflects a parsed-and-resolved request: they echo the
-## verb, echo the requested packages, and carry a (possibly empty) resource
-## string (pkgexec tools/preview.cc emit sites). schema_invalid is the sole
-## pre-parse status -- its verb and resource are null and are not echoed.
-.PREVIEW_RESOLVED <- c("ok", "no_op", "package_not_owned", "held",
-                       "protected_package")
-
 .or_na_chr <- function(x) {
     if (is.null(x)) {
         NA_character_
@@ -170,21 +163,43 @@
                          status, "'")
         }
     }
-    ## a resolved status echoes the verb and the requested packages IN ORDER, and
-    ## carries a resource; schema_invalid is pre-parse (verb null, packages [],
-    ## resource null) and is not echoed -- it fails closed below via its status.
-    if (status != "schema_invalid") {
-        if (!identical(parsed$verb, verb_spec$request_verb)) {
+    ## Exact per-status verb/resource/packages shape (pkgexec tools/preview.cc
+    ## emit sites). Each status fixes these three, so a reply mislabeled for its
+    ## status -- a schema_invalid carrying a real verb, or a resolve_failed with a
+    ## null resource -- is refused rather than trusted.
+    verb_ok <- identical(parsed$verb, verb_spec$request_verb)
+    echo <- as.character(unlist(parsed$packages, use.names = FALSE))
+    echo_ok <- identical(echo, req_packages)
+    empty_shape <- is.null(parsed$verb) && is.null(parsed$resource) &&
+    length(echo) == 0L
+    if (status == "schema_invalid") {
+        ## pre-parse: no verb, no resource, no echoed packages -- always
+        if (!empty_shape) {
+            .preview_bad("schema_invalid must carry a null verb, null resource, ",
+                         "and no packages")
+        }
+    } else if (status == "internal") {
+        ## internal is emitted both pre-parse (a stdin I/O error: verb/resource
+        ## null, no packages) and post-parse (verb + echoed packages; resource may
+        ## be null when it failed before resolving). Accept exactly those two
+        ## shapes -- resource is not required, but a half-formed mix is refused.
+        if (!(empty_shape || (verb_ok && echo_ok))) {
+            .preview_bad("internal has neither the pre-parse nor the post-parse ",
+                         "shape")
+        }
+    } else {
+        ## every resolved / resolve_failed / dpkg_broken reply echoes the verb and
+        ## the requested packages IN ORDER and carries a (possibly empty) resource
+        if (!verb_ok) {
             .preview_bad("verb echo does not match the request")
         }
-        got <- as.character(unlist(parsed$packages, use.names = FALSE))
-        if (!identical(got, req_packages)) {
+        if (!echo_ok) {
             .preview_bad("packages echo does not match the request ",
                          "(order-sensitive)")
         }
-    }
-    if (status %in% .PREVIEW_RESOLVED && is.null(parsed$resource)) {
-        .preview_bad("resource is null for the resolved status '", status, "'")
+        if (is.null(parsed$resource)) {
+            .preview_bad("resource is null for '", status, "'")
+        }
     }
     parsed$status <- status
     parsed

@@ -95,12 +95,13 @@ for (st in names(refusals)) {
     expect_equal(e$detail, "nginx")
 }
 
-## ---- the non-digest error statuses: typed, no records ---------------------
+## ---- the non-digest error statuses that echo the request: typed -----------
+## (resolve_failed/dpkg_broken/internal carry the verb, echo the packages, and
+## carry a resource; schema_invalid and the pre-parse internal are separate below)
 plain <- list(
     resolve_failed = "runix_resolve_failed",
     dpkg_broken    = "runix_dpkg_broken",
-    internal       = "runix_helper_internal",
-    schema_invalid = "runix_preview_failed")
+    internal       = "runix_helper_internal")
 for (st in names(plain)) {
     old <- pkgops:::set_runner(mk(resp(st, detail = quo("boom")), exit = 1L))
     e <- tryCatch(pkgops::apt_install_preview("nginx"), error = identity)
@@ -191,6 +192,56 @@ pkgops:::set_runner(old)
 expect_inherits(p2, "pkgops_preview")
 expect_equal(p2$packages, c("curl", "nginx"))
 expect_true(grepl('"packages":["curl","nginx"]', seen$input, fixed = TRUE))
+
+## ---- exact per-status verb/resource/packages shape -----------------------
+# A raw response builder with full control over the pre-parse fields.
+raw <- function(status, verb = "null", packages = "[]", resource = "null",
+                plan_schema = "null", plan_hash = "null", records = "[]",
+                detail = "null") {
+    sprintf(paste0('{"schema_version":1,"status":"%s","verb":%s,',
+                   '"packages":%s,"plan_schema":%s,"resource":%s,',
+                   '"plan_hash":%s,"records":%s,"detail":%s}'),
+            status, verb, packages, plan_schema, resource, plan_hash,
+            records, detail)
+}
+call_install <- function(json, exit) {
+    old <- pkgops:::set_runner(mk(json, exit = exit))
+    e <- tryCatch(pkgops::apt_install_preview("nginx"), error = identity)
+    pkgops:::set_runner(old)
+    e
+}
+
+# schema_invalid: the well-formed pre-parse shape (null verb/resource, no
+# packages) is accepted and mapped; any real verb/resource/packages is refused.
+expect_inherits(call_install(raw("schema_invalid", detail = quo("bad")), 1L),
+                "runix_preview_failed")
+expect_inherits(call_install(raw("schema_invalid", verb = '"apt.install"'), 1L),
+                "runix_preview_failed")          # a real verb on schema_invalid
+expect_inherits(call_install(raw("schema_invalid", resource = '"nginx"'), 1L),
+                "runix_preview_failed")          # a real resource on schema_invalid
+expect_inherits(call_install(raw("schema_invalid", packages = '["nginx"]'), 1L),
+                "runix_preview_failed")          # echoed packages on schema_invalid
+
+# internal: BOTH shapes are valid and map to runix_helper_internal --
+#  (a) pre-parse I/O error: null verb/resource, no packages
+ei_pre <- call_install(raw("internal", detail = quo("io")), 1L)
+expect_inherits(ei_pre, "runix_helper_internal")
+#  (b) post-parse: verb + echoed packages, resource may be null
+ei_post <- call_install(raw("internal", verb = '"apt.install"',
+                            packages = '["nginx"]', resource = "null",
+                            detail = quo("apt_init")), 1L)
+expect_inherits(ei_post, "runix_helper_internal")
+# ... but a half-formed internal (null verb yet echoed packages) is refused
+expect_inherits(call_install(raw("internal", packages = '["nginx"]'), 1L),
+                "runix_preview_failed")
+
+# resolve_failed / dpkg_broken must carry a non-null resource
+expect_inherits(call_install(raw("resolve_failed", verb = '"apt.install"',
+                                 packages = '["nginx"]', resource = "null"), 1L),
+                "runix_preview_failed")
+expect_inherits(call_install(raw("dpkg_broken", verb = '"apt.install"',
+                                 packages = '["nginx"]', resource = "null"), 1L),
+                "runix_preview_failed")
 
 ## ---- a missing planner binary fails closed, typed -------------------------
 # (default runner, no injection: /usr/bin/runix-apt-preview is absent here)
