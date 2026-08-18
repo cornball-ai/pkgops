@@ -184,12 +184,15 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
         arch <- .rec_str(rec, "architecture")
         action <- .rec_str(rec, "action")
         to_version <- .rec_str(rec, "to_version")
-        if (is.na(pkg) || is.na(action)) {
+        ## architecture is REQUIRED by the pinned txn record grammar (digest.h);
+        ## a missing/malformed arch must fail, never wildcard-match every arch.
+        if (is.na(pkg) || is.na(action) || is.na(arch)) {
             fails <- c(fails, "malformed transaction record")
             next
         }
         row <- inst[!is.na(inst$package) & inst$package == pkg &
-            (is.na(arch) | inst$architecture == arch),, drop = FALSE]
+            !is.na(inst$architecture) &
+            inst$architecture == arch,, drop = FALSE]
         why <- .check_txn_state(action, to_version, row)
         if (!is.na(why)) {
             fails <- c(fails, sprintf("%s: %s", pkg, why))
@@ -207,12 +210,15 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
     for (rec in records) {
         pkg <- .rec_str(rec, "package")
         arch <- .rec_str(rec, "architecture")
-        if (is.na(pkg)) {
+        ## architecture is REQUIRED by the pinned configure record grammar;
+        ## a missing/malformed arch fails, never wildcard-matches every arch.
+        if (is.na(pkg) || is.na(arch)) {
             fails <- c(fails, "malformed configure record")
             next
         }
         row <- inst[!is.na(inst$package) & inst$package == pkg &
-            (is.na(arch) | inst$architecture == arch),, drop = FALSE]
+            !is.na(inst$architecture) &
+            inst$architecture == arch,, drop = FALSE]
         if (nrow(row) > 0L) {
             status <- as.character(row$status[1L])
         } else {

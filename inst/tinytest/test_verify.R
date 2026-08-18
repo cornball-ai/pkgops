@@ -82,6 +82,33 @@ expect_true(grepl("half-configured", r$detail))
 r <- verify(p_inst, reader(inst_df("nginx", "1.2", "i386", "installed")))
 expect_identical(r$verified, FALSE)
 
+## ---- transaction: architecture is per-record, never a wildcard --------------
+# same package on two arches: each record is matched to ITS OWN arch row
+two_arch <- reader(inst_df(c("nginx", "nginx"), c("1.2", "1.0"),
+                           c("amd64", "i386"), c("installed", "installed")))
+p_2a <- prevv("apt.install", list(txn("nginx", "install", "1.2", "amd64"),
+                                  txn("nginx", "install", "1.2", "i386")))
+r <- verify(p_2a, two_arch)
+expect_identical(r$verified, FALSE)                # i386 is at 1.0, not 1.2
+expect_true(grepl("version 1.0", r$detail))
+# both records match their arch's version -> TRUE
+ok_2a <- reader(inst_df(c("nginx", "nginx"), c("1.2", "1.2"),
+                        c("amd64", "i386"), c("installed", "installed")))
+expect_identical(verify(p_2a, ok_2a)$verified, TRUE)
+
+# a transaction record MISSING architecture is malformed, not a wildcard match
+r <- verify(prevv("apt.install",
+                  list(list(package = "nginx", action = "install",
+                            to_version = "1.2"))),
+            reader(inst_df("nginx", "1.2", "amd64", "installed")))
+expect_identical(r$verified, FALSE)
+expect_true(grepl("malformed", r$detail))
+# a configure record MISSING architecture is likewise malformed
+r <- verify(prevv("apt.configure", list(list(package = "nginx"))),
+            reader(inst_df("nginx", "1.2", "amd64", "installed")))
+expect_identical(r$verified, FALSE)
+expect_true(grepl("malformed", r$detail))
+
 ## ---- transaction: remove ----------------------------------------------------
 p_rm <- prevv("apt.remove", list(txn("nginx", "remove")))
 expect_identical(verify(p_rm, reader(inst_df("nginx", "1.2", "amd64",
