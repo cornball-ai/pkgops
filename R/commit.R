@@ -1,13 +1,13 @@
 ## The commit-session orchestrator: the branched commit lifecycle of the contract
 ## (pkgops-plan.md 4), wiring runix's exported effect-session API to the pure
-## classifier (R/classify.R). This increment builds the open/commit/write_outcome
-## wiring and the outcome-closed-before-signal discipline (4.8). TWO steps of the
-## full lifecycle are DEFERRED to their own later increments and are marked below:
-##   - the polkit authorization branch (contract 4.4), and
-##   - pkgstate verification (contract 4.7).
-## Until those land there is no exported per-verb apt_<verb>() commit entrypoint:
-## an issuer cannot authorize or verify truthfully yet, so the mutation-capable
-## path stays internal (.commit_session) and hermetic (fake session-ops).
+## classifier (R/classify.R) and the polkit decision (R/polkit.R). Steps wired:
+## 1 capability, 2 authorization (the polkit branch + the plain-intent terminal
+## refusal), 3-5 open/commit/classify, 7 write_outcome, 8 return/signal, with the
+## outcome-closed-before-signal discipline (4.8). ONE step remains DEFERRED to its
+## own later increment and is marked below: pkgstate verification (contract 4.7).
+## Until it lands there is no exported per-verb apt_<verb>() commit entrypoint --
+## an issuer cannot verify truthfully yet, so the mutation-capable path stays
+## internal (.commit_session) and hermetic (fake session-ops + fake pkcheck).
 
 ## The broker's well-known AF_UNIX socket (matches runix's effect_capability
 ## default). A caller may override for a test/staging broker.
@@ -91,13 +91,55 @@
     .classify_commit(commit, preview)
 }
 
+## Handle a machine-mode polkit refusal (contract 4.4). No effect intent is ever
+## opened: for a terminal refusal (unauthorized / approval_required) the attempt
+## is recorded as a PLAIN intent + terminal outcome (effect_issued = FALSE) under
+## one broker cid, then the mapped condition is signaled -- the record is the
+## "close" that precedes the signal. A check that could not be run at all
+## (check_failed) is fail-closed WITHOUT recording anything: there is no
+## authoritative decision to persist, so pkgops raises and opens nothing.
+##
+## BOUNDARY [REVIEW]: check_failed -> pkgops_polkit_check_failed (no intent) is a
+## pkgops-owned outcome the contract's taxonomy does not name. If the refuse
+## RECORD itself fails (broker down / intent not durable), that raised condition
+## propagates -- the refusal could not be recorded, which the caller must see;
+## either way no effect ran.
+.refuse <- function(ops, socket_path, preview, decision) {
+    if (identical(decision, "check_failed")) {
+        stop_pkgops("apt ", preview$verb,
+                    ": the polkit authorization check could not be run",
+                    class = "pkgops_polkit_check_failed",
+                    data = list(verb = preview$verb, resource = preview$resource))
+    }
+    ## record the plain intent + terminal outcome; a raised record error means the
+    ## refusal could not be persisted and propagates (nothing ran regardless).
+    res <- ops$refuse(socket_path, operation = preview$verb,
+                      resource = preview$resource, status = decision)
+    cid <- if (is.list(res) && .is_scalar_str(res$correlation_id)) {
+        res$correlation_id
+    } else {
+        NA_character_
+    }
+    cls <- .status_condition(decision) # unauthorized -> runix_unauthorized, etc.
+    msg <- switch(decision,
+                  unauthorized = sprintf("apt %s: authorization denied", preview$verb),
+                  approval_required = sprintf(
+            "apt %s: authorization requires an approval that was not granted",
+            preview$verb),
+                  sprintf("apt %s: refused (%s)", preview$verb, decision))
+    cond <- .build_commit_condition(cls, msg, preview, cid, decision,
+                                    effect_issued = FALSE)
+    stop(cond)
+}
+
 ## Drive the branched commit lifecycle for one committable preview and return the
 ## pkgops_outcome (success) or SIGNAL the mapped condition (failure), with the
 ## outcome ALWAYS written before the signal (4.8). Internal for now -- the public
 ## per-verb API that wraps this (with the preview {verb,resource,plan_hash} match
-## check) lands once polkit + verification complete the lifecycle.
+## check) lands once pkgstate verification completes the lifecycle.
 .commit_session <- function(preview, socket_path = .PKGOPS_BROKER_SOCKET,
-                            lock_timeout = 0L, deadline_ms = 120000L) {
+                            interactive = FALSE, lock_timeout = 0L,
+                            deadline_ms = 120000L) {
     if (!inherits(preview, "pkgops_preview")) {
         stop_pkgops("commit requires a pkgops_preview (from apt_<verb>_preview())",
                     class = "pkgops_bad_request")
@@ -129,6 +171,18 @@
         stop_pkgops("this 'ok' preview carries no plan digest to commit",
                     class = "pkgops_bad_request", data = list(verb = preview$verb))
     }
+    ## recover the verb spec from the preview's request verb (for the polkit
+    ## action); a hand-built preview with an unknown verb is refused here.
+    verb_spec <- .verb_spec_for(preview$verb)
+    if (is.null(verb_spec)) {
+        stop_pkgops("unrecognised verb in preview: ",
+            if (.is_scalar_str(preview$verb)) {
+                shQuote(preview$verb)
+            } else {
+                "<malformed>"
+            },
+                    class = "pkgops_bad_request")
+    }
     ops <- session_ops()
 
     ## step 1 -- effect-receipt capability negotiation (the real extension +
@@ -136,11 +190,16 @@
     ## on failure; nothing is opened or minted.
     ops$capability(socket_path, plan_schema = preview$plan_schema)
 
-    ## step 2 -- POLKIT authorization branch: DEFERRED to its own increment.
-    ## Machine-mode pkcheck / autonomous-verb handling / the plain-intent
-    ## (approval_required|unauthorized) terminal outcome are not wired here yet.
-    ## Interactive pkexec still authorizes at the entrypoint spawn inside runix's
-    ## C; this orchestrator does no machine-mode pre-check until that increment.
+    ## step 2 -- POLKIT authorization (contract 4.4). Interactive mode defers to
+    ## the pkexec prompt at the entrypoint spawn (authorize -> proceed); machine
+    ## mode runs a non-interactive pkcheck. A machine-mode refusal never opens an
+    ## effect intent: it records a PLAIN intent + terminal outcome and stops, so no
+    ## unused effect receipt is minted. A failed check fails closed with nothing
+    ## opened.
+    decision <- .authorize(verb_spec, interactive)
+    if (!identical(decision, "authorized")) {
+        return(.refuse(ops, socket_path, preview, decision))
+    }
 
     ## step 3 -- open the effect-required intent. The receipt + outcome binding
     ## are minted into wipeable C heap; R gets only an opaque PID-bound handle and

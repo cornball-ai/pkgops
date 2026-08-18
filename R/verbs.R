@@ -22,6 +22,19 @@
                       update = list(request_verb = "apt.update", arity = "none", autonomous = TRUE),
                       configure = list(request_verb = "apt.configure", arity = "none", autonomous = FALSE))
 
+## The verb spec for a request verb ("apt.install"), or NULL. A pkgops_preview
+## carries only its request verb; the commit path recovers the spec from it (for
+## the polkit action id). A hand-built preview with an unknown verb returns NULL
+## and is refused before anything is opened.
+.verb_spec_for <- function(request_verb) {
+    for (spec in .PKGOPS_VERBS) {
+        if (identical(spec$request_verb, request_verb)) {
+            return(spec)
+        }
+    }
+    NULL
+}
+
 ## The planner's own limits (pkgexec/src/request.h): a request carries at most
 ## PKGX_MAX_PACKAGES names, each at most PKGX_MAX_NAME bytes. Enforced here so an
 ## over-long request is a clean pkgops condition, not a schema_invalid round-trip.
