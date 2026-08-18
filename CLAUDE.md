@@ -59,7 +59,7 @@ reviewed increments** — hold at each increment before the next.
   (`pkgstate_reader()`/`set_pkgstate_reader`, hermetic-test-only). **`pkgstate` is
   now an `Imports`** (the default reader uses it). Record grammar/post-state pinned
   to pkgexec 0.0.3 + pkgstate 0.0.1.9.
-- **Increment 5b (this): wire verification into `.commit_session` step 6** —
+- **Increment 5b (merged): wire verification into `.commit_session` step 6** —
   after commit + classify, on the **success path only** (`is.null(condition)`: an
   `ok`/`no_op` that will be returned), `.verify_and_capture()` runs `.verify()` and
   captures `verified`/`verify_detail` onto the returned outcome. **Observational**:
@@ -68,12 +68,22 @@ reviewed increments** — hold at each increment before the next.
   (step 7) and outcome-before-signal holds. A known failure / left-open effect is
   not verified. The reader stays behind the seam, so `.commit_session` is fully
   hermetic (fake session-ops + fake pkcheck + fake reader).
-- **Still NOT started** (later increments, each its own review): the **exported
-  per-verb `apt_<verb>()` API** (with the preview `{verb,resource,plan_hash}` match
-  check). The durable outcome-record grammar (incl. the `observed`/`changed`
-  post-state fields the verdict feeds), the plain-intent refusal record grammar,
-  and the exact pkcheck rc→outcome split are pinned against a real broker/polkit in
-  the VM-gated increment.
+- **Increment 6 (this): the exported per-verb `apt_<verb>()` commit API**
+  (`R/commit_api.R`) — nine public entrypoints, each committing the
+  `pkgops_preview` its `apt_<verb>_preview()` twin produced. `.commit_verb()`
+  (in `R/commit.R`) adds the two checks `.commit_session` can't: the arg is a
+  `pkgops_preview`, and its verb is the one this fn commits (a verb/preview
+  mismatch is a `pkgops_bad_request`), both before anything opens; then delegates.
+  The `plan_hash` stays the integrity authority (the helper re-validates it under
+  the lock; pkgops does not re-derive it). `interactive` defaults to
+  `interactive()`. **This is the increment that makes pkgops mutation-capable** —
+  the `DESCRIPTION` no longer says mutation is out of scope.
+- **Still NOT started** (the VM-gated increment): the durable outcome-record
+  grammar (incl. the `observed`/`changed` post-state fields the verdict feeds), the
+  plain-intent refusal record grammar, and the exact pkcheck rc→outcome split,
+  pinned against a real broker/polkit; and, if wanted, the combined
+  `apt_<verb>_run()` convenience (plan+commit, defined in terms of the two-call
+  form). Then **slice 4: `rctl` apt.\*** (kept separate).
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).
