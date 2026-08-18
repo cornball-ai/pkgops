@@ -1,3 +1,24 @@
+# pkgops 0.0.1.1
+
+Begins the commit lifecycle (slice 3b), first increment: the **commit-result
+contract**. Pure and hermetic -- no effect, no spawn, no broker yet.
+
+* The closed twelve-status commit vocabulary and each status's stable runix
+  condition class (`runix_apt_locked`, `runix_no_intent`, `runix_not_applied`,
+  `runix_operation_failed`, plus the six shared with the preview channel),
+  pinned bytewise to shipped pkgexec v0.0.3 (`src/result.c`) with a drift test.
+* `effect_issued` is carried as a strict tri-state, read as the helper's
+  first-class boolean and never inferred from the status (`dpkg_broken` is TRUE
+  when a commit broke dpkg, FALSE when a pre-existing broken state was found);
+  `NA` is reserved for a result that cannot be trusted.
+* cid-equality (a result is bound to its intent only when the correlation_id
+  matches) and the versioned `pkgops_outcome` object (§6.2).
+* `apt_locked` -- lock contention refused before the commit, so provably
+  no-effect -- is registered retryable in the shared runix registry; generic
+  transport/timeout is deliberately not.
+* Still held: the effect-session wiring, polkit authorization, and `pkgstate`
+  verification are later increments of 3b, each separately reviewed.
+
 # pkgops 0.0.1
 
 Initial release: the **preview half** of the unprivileged apt-mutation issuer

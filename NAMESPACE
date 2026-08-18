@@ -10,4 +10,5 @@ export(apt_unhold_preview)
 export(apt_update_preview)
 export(apt_upgrade_preview)
 
+S3method(print,pkgops_outcome)
 S3method(print,pkgops_preview)
