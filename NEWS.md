@@ -1,3 +1,31 @@
+# pkgops 0.0.1.4
+
+Commit lifecycle (slice 3b), fourth increment: the **polkit authorization
+decision** (the §4.3-step-2 decision layer). Pure decision + an injectable
+`pkcheck` seam, no broker and no intent yet -- the next increment wires it into
+`.commit_session`.
+
+* `.authorize(verb_spec, interactive)` decides whether a commit may proceed.
+  **Interactive mode** defers to the `pkexec` prompt at the entrypoint spawn and
+  skips `pkcheck`; **machine mode** runs a native, non-interactive `pkcheck` for
+  the verb's polkit action (`ai.cornball.runix.apt.<verb>`) against this
+  process's race-safe `pid,start-time,uid` subject.
+* The `pkcheck` exit code maps to a closed decision vocabulary, pinned to the
+  tested canary matrix: `0` authorized, `1` unauthorized, `2`/`3`
+  approval_required (a challenge that cannot be obtained non-interactively), and
+  anything else `check_failed` (fail closed, never silently authorized).
+* The `pkcheck` call is behind an injectable seam (`set_pkcheck()`), so the whole
+  decision is hermetic. It is **not** a privilege boundary: polkit still enforces
+  at the `pkexec` spawn inside runix's C, so a substituted check can only make
+  pkgops proceed to a commit that `pkexec` then denies, or refuse one it would
+  have allowed -- both degrade safely.
+* The autonomous verbs (`apt.update`/`apt.hold`) need no special-casing: the
+  `runix-apt-autonomous` polkit rule grants members `rc 0` through the same
+  check, and a non-member falls through to a refusal like any other verb.
+* Still deferred (their own later increments): wiring the decision into
+  `.commit_session` with the plain-intent terminal-outcome path, `pkgstate`
+  verification, and the exported per-verb `apt_<verb>()` API.
+
 # pkgops 0.0.1.3
 
 Commit lifecycle (slice 3b), third increment: the **effect-session
