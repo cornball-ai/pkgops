@@ -39,28 +39,33 @@ reviewed increments** — hold at each increment before the next.
   approval_required / else check_failed, integer-valued-guarded), and
   `.authorize(verb_spec, interactive)` (interactive mode defers to the pkexec
   prompt and skips pkcheck).
-- **Increment 4b (this): wire authorization into `.commit_session`** — step 2 now
-  runs `.authorize(verb_spec, interactive)` after capability and before open.
-  Authorized proceeds to the effect intent; a machine-mode refusal
-  (`unauthorized`/`approval_required`) goes through `.refuse()`, which opens a
-  **plain intent** via the seam's `refuse` op (`runix::broker_audit_sink()` +
-  `audit_two_phase()` with a no-op effect) and writes the terminal outcome
-  (`effect_issued=FALSE`) under one broker cid, then signals — no effect intent is
-  ever opened for a refusal. `check_failed` fails closed with **nothing recorded**
-  (`pkgops_polkit_check_failed`). `interactive` is a caller-supplied parameter
-  (runix exposes no TTY probe; default `FALSE` = machine mode). Added:
-  `.verb_spec_for()` (verbs.R), the `refuse` seam op (session_ops.R), and the
-  `approval_required` → `runix_approval_required` outcome status
-  (`.PKGOPS_POLKIT_CONDITION`, outcome.R).
-- **Still NOT started** (later increments, each its own review): **`pkgstate`
-  verification** (§4.3 step 6 — `pkgstate` becomes an `Imports` only when that
-  increment lands, not before, or it is an unused-Import NOTE; it also supplies
-  the outcome record's `observed`/`changed` post-state fields), and then the
-  **exported per-verb `apt_<verb>()` API** (with the preview
-  `{verb,resource,plan_hash}` match check). The durable outcome-record grammar in
-  `.outcome_record()`, the plain-intent refusal record grammar, and the exact
-  pkcheck rc→outcome split are pinned against a real broker/polkit in the VM-gated
-  increment.
+- **Increment 4b (merged): wire authorization into `.commit_session`** — step 2
+  runs `.authorize(verb_spec, interactive)`; authorized proceeds, a machine-mode
+  refusal opens a **plain intent** via the seam's `refuse` op and writes the
+  terminal outcome (only signaled as closed when `audit_persisted == TRUE` with a
+  valid broker cid, `.valid_broker_cid`); `check_failed` fails closed with nothing
+  recorded.
+- **Increment 5a (this): pkgstate verification predicates** (`R/verify.R`) —
+  `.verify(preview, reader)` checks every **resolved record** of a committed
+  preview against native ground truth, per verb (§6.3): transaction verbs by each
+  record's `action` (install/upgrade/downgrade → installed at `to_version`; remove
+  → `config-files`/`not-installed`/absent; purge → absent/`not-installed`, a
+  surviving `config-files` is a *failed* purge) via `dpkg_installed()`; configure →
+  fully `installed`; hold/unhold → the `dpkg_selections()` want reads back; update
+  → `NA`. **Independent of the helper's status** (reads only the plan + ground
+  truth); returns `(verified TRUE/FALSE/NA, detail)`. pkgstate reads go through an
+  injectable reader seam (`pkgstate_reader()`/`set_pkgstate_reader`,
+  hermetic-test-only). **`pkgstate` is now an `Imports`** (the default reader uses
+  it). Record grammar/post-state pinned to pkgexec 0.0.3 + pkgstate 0.0.1.9.
+- **Still NOT started** (later increments, each its own review): **5b — wire
+  `.verify()` into `.commit_session` step 6** (for a success status, verify and
+  **capture** the verdict into the outcome's `verified`/`verify_detail` — never
+  raise; a verification failure still writes the outcome), and then the **exported
+  per-verb `apt_<verb>()` API** (with the preview `{verb,resource,plan_hash}` match
+  check). The durable outcome-record grammar (incl. the `observed`/`changed`
+  post-state fields verification now produces), the plain-intent refusal record
+  grammar, and the exact pkcheck rc→outcome split are pinned against a real
+  broker/polkit in the VM-gated increment.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).

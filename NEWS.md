@@ -1,3 +1,31 @@
+# pkgops 0.0.1.6
+
+Commit lifecycle (slice 3b): the **pkgstate verification predicates** (§4.7 /
+§6.3). Pure, hermetic (the dpkg/apt reads go through an injectable reader seam);
+the next increment wires them into `.commit_session`.
+
+* `.verify(preview, reader)` checks every **resolved record** of a committed
+  preview against native ground truth, per verb: transaction verbs by each
+  record's action (install/upgrade/downgrade must be installed at `to_version`;
+  remove leaves `config-files`/`not-installed`/an absent row; purge must be
+  absent, a surviving `config-files` is a **failed** purge) via
+  `pkgstate::dpkg_installed()`; configure must be fully `installed`; hold/unhold
+  read the `pkgstate::dpkg_selections()` want back; update has no post-state
+  (`NA`).
+* Verification is **independent of the helper's self-report** (§4.7): it reads
+  only the plan and the ground truth, so a clean status with a disagreeing
+  post-state is a verification failure. It returns `(verified TRUE/FALSE/NA,
+  detail)` and never raises.
+* The record grammar the preview slice carried advisory-only is now
+  **load-bearing**, pinned to shipped pkgexec 0.0.3 (the five transaction actions,
+  the configure/hold state words) and pkgstate 0.0.1.9 (the `status` state word vs
+  the `selection` want word).
+* `pkgstate` is now an `Imports` (the default reader uses it); the suite injects a
+  fake reader, so dpkg is never queried.
+* Still deferred: wiring `.verify()` into `.commit_session` step 6 (capturing the
+  verdict into the outcome, never raising), and the exported per-verb
+  `apt_<verb>()` API.
+
 # pkgops 0.0.1.5
 
 Commit lifecycle (slice 3b): **wire the polkit authorization into

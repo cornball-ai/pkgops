@@ -65,6 +65,16 @@ jobs:
           R CMD INSTALL "${RUNNER_TEMP}/runix"
           Rscript -e 'install.packages("tinytest")'
 
+      # pkgstate is pkgops's third Import (read-only dpkg/apt state; the commit
+      # lifecycle's verification reads it). Pure R (imports runix, installed
+      # above), so a source install from the public sibling repo suffices; the
+      # suite injects a fake reader, so dpkg is never queried on the runner.
+      - name: Install pkgstate (public sibling Import)
+        run: |
+          git clone --depth 1 https://github.com/cornball-ai/pkgstate.git \
+            "${RUNNER_TEMP}/pkgstate"
+          R CMD INSTALL "${RUNNER_TEMP}/pkgstate"
+
       - name: Install pkgops
         run: R CMD INSTALL .
 
