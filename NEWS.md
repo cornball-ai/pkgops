@@ -9,13 +9,18 @@ the guard locally and adds no new dependency.
 
 * **Observer.** `.observe()` reads the committed preview's resolved records into
   the record's `observed` object (the schema's only object field): `{status,
-  version}` per `package:arch` for transaction/configure, `{selection}` for hold.
-  `.freeze_reader()` caches the post-commit read so the verdict and the observed
-  snapshot come from **one** read (no verify/observe TOCTOU).
+  version}` per `package:arch` for transaction/configure, `{selection}` per matched
+  `package:arch` for hold. Hold records carry no architecture, so an unqualified
+  target records **one entry per matched architecture** (deterministic radix order)
+  rather than collapsing to a single row that could hide a change confined to one
+  arch. `.freeze_reader()` caches the post-commit read so the verdict and the
+  observed snapshot come from **one** read (no verify/observe TOCTOU).
 * **`state_changed` is an observed diff.** A pre-commit `.observe()` snapshot is
   compared with the post-commit state; `state_changed` is `NA` (omitted) whenever
   either side is unavailable. It is **never** inferred from `effect_issued`, which
-  means the effect was issued, not that on-disk state moved.
+  means the effect was issued, not that on-disk state moved. `apt.update` reads no
+  observable post-state, so `observed`, `changed`, and `state_changed` are all
+  omitted (never a fabricated transition).
 * **`authorized_via` provenance.** Decided at the authorization site as `"pkexec"`
   / `"autonomous"` / `"pkcheck"` and recorded onto the outcome, never reconstructed
   downstream from partial state.

@@ -67,6 +67,18 @@ expect_identical(rec_of(mkout(state_changed = TRUE))$state_changed, TRUE)
 expect_identical(rec_of(mkout(state_changed = FALSE))$state_changed, FALSE)
 expect_false("state_changed" %in% names(rec_of(mkout(state_changed = NA))))
 
+## ---- update: no post-state read -> observed/changed/state_changed all OMITTED -
+# apt.update reads no package post-state and no pre/post index state, so .observe
+# returns NULL (read_failed FALSE) and .state_changed returns NA. The record must
+# then carry NONE of the three -- never a fabricated "did change" (blocker 2).
+r <- rec_of(mkout(verb = "apt.update", resource = "*", verified = NA,
+                  observed = NULL, observed_failed = FALSE, state_changed = NA))
+expect_false("observed" %in% names(r))
+expect_false("changed" %in% names(r))
+expect_false("state_changed" %in% names(r))
+expect_identical(r$observed_failed, FALSE)   # a real bool (no read failed); never NA here
+expect_equal(r$operation, "apt.update")
+
 ## ---- NA/NULL optional fields are OMITTED, not sent as null -------------------
 # a bare known-failure-style outcome: no verification captured
 r <- rec_of(mkout(verified = NA, authorized_via = "pkexec", observed = NULL,

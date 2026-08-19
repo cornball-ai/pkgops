@@ -77,10 +77,13 @@ reviewed increments** — hold at each increment before the next.
 - **VM-gate increment Part A (this): durable audit record grammar** — enrich the
   committed outcome with the broker `RECORD_SCHEMA` fields so the exported API
   writes a complete record. `.observe()` reads the resolved records' post-state
-  into the record's `observed` object (`{status,version}` for txn/configure,
-  `{selection}` for hold); `.freeze_reader()` gives verdict + observe one shared
-  post-read. `state_changed` is a real pre/post `.observe()` diff (D7 = S-B),
-  `NA` when either side is unavailable, never inferred from `effect_issued`.
+  into the record's `observed` object, keyed by `package:arch` (`{status,version}`
+  for txn/configure, `{selection}` for hold -- one entry per matched arch, since an
+  unqualified hold target can span arches); `.freeze_reader()` gives verdict +
+  observe one shared post-read. `state_changed` is a real pre/post `.observe()` diff
+  (D7 = S-B), `NA` when either side is unavailable, never inferred from
+  `effect_issued`; `apt.update` observes nothing, so observed/changed/state_changed
+  are all omitted.
   `.authorized_via()` records `pkexec`/`autonomous`/`pkcheck` at the authorization
   site (`.authorize()` now returns `list(decision, via)`). `.outcome_record()`
   maps onto the broker's 16-field allow-list (omitting `NA`/`NULL` optionals;

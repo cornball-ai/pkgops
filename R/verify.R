@@ -388,8 +388,15 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
     list(state = if (length(state) > 0L) state else NULL, read_failed = FALSE)
 }
 
-## The observed selection state (hold/unhold): {selection} per target, keyed by the
-## record's identity (`package` or `package:arch`). Mirrors .verify_hold's matching.
+## The observed selection state (hold/unhold): {selection} per matched row, keyed by
+## `package:arch`. A hold record carries no architecture, so an UNQUALIFIED target can
+## match several architecture rows (e.g. pkg:amd64 + pkg:i386). Each matched row is
+## recorded under its own `package:arch` key, ordered deterministically (radix on
+## architecture, locale-independent for a stable pre/post diff) -- collapsing to one
+## row would hide a change confined to a second architecture, making `state_changed`
+## read FALSE while .verify_hold (which checks EVERY row) correctly fails. A target
+## that matches no row is documented under its identity (`package:arch` if it named an
+## arch, else the bare `package`) with an NA selection.
 .observe_hold <- function(records, reader) {
     parsed <- lapply(records, function(rec) {
         .split_pkg_arch(.rec_str(rec, "package"))
@@ -402,22 +409,26 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
         if (is.na(p$package)) {
             next
         }
-        key <- if (is.na(p$architecture)) {
-            p$package
-        } else {
-            paste0(p$package, ":", p$architecture)
-        }
         hit <- !is.na(sel$package) & sel$package == p$package
         if (!is.na(p$architecture)) {
             hit <- hit & !is.na(sel$architecture) &
             sel$architecture == p$architecture
         }
         row <- sel[hit,, drop = FALSE]
-        state[[key]] <- list(selection = if (nrow(row) > 0L) {
-                as.character(row$selection[1L])
+        if (nrow(row) == 0L) {
+            key <- if (is.na(p$architecture)) {
+                p$package
             } else {
-                NA_character_
-            })
+                paste0(p$package, ":", p$architecture)
+            }
+            state[[key]] <- list(selection = NA_character_)
+            next
+        }
+        ord <- order(as.character(row$architecture), method = "radix")
+        for (i in ord) {
+            key <- paste0(p$package, ":", as.character(row$architecture[i]))
+            state[[key]] <- list(selection = as.character(row$selection[i]))
+        }
     }
     list(state = if (length(state) > 0L) state else NULL, read_failed = FALSE)
 }
