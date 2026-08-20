@@ -42,6 +42,12 @@
                              "correlation_id", "phase", "host", "pid",
                              "actor", "time", "binding", "broker")
 
+## The two fields the broker's RECORD_SCHEMA marks REQUIRED (runix-audit-broker
+## src/json.c: operation, outcome). A record missing either is schema_invalid at
+## the broker; enforce it here so a future omission fails hermetically, not only in
+## the VM (the Part B finding was exactly a missing `outcome`).
+.PKGOPS_RECORD_REQUIRED <- c("operation", "outcome")
+
 ## Whether a value matches its allow-list type: a scalar non-NA string/bool/number
 ## (number >= 0), or a named-list object.
 .record_type_ok <- function(value, type) {
@@ -71,6 +77,11 @@
     if (length(unknown) > 0L) {
         stop_pkgops("internal: outcome record carries a non-allow-list field: ",
                     unknown[1L], class = "pkgops_bad_request")
+    }
+    missing <- setdiff(.PKGOPS_RECORD_REQUIRED, nm)
+    if (length(missing) > 0L) {
+        stop_pkgops("internal: outcome record is missing the broker-required ",
+                    "field: ", missing[1L], class = "pkgops_bad_request")
     }
     for (f in nm) {
         if (!.record_type_ok(rec[[f]], unname(.PKGOPS_RECORD_FIELDS[f]))) {
@@ -116,8 +127,20 @@
             rec
         }
     }
-    rec <- list(operation = outcome[["verb"]], resource = outcome[["resource"]],
-                effect_issued = ei, scope = "system", preview = FALSE)
+    ## the broker-required coarse `outcome`: "ok" for a success status (ok/no_op),
+    ## "error" for every closed failure/refusal that reaches write_outcome. The
+    ## DETAILED result stays in `observed` (the rich per-package post-state), never
+    ## collapsed into this coarse field -- the same success/error split the reference
+    ## boundary (rab-exercise) writes. RECORD_SCHEMA marks `outcome` REQUIRED, so a
+    ## record without it is schema_invalid at the broker (the Part B finding).
+    outcome_label <- if (isTRUE(outcome[["status"]] %in% .PKGOPS_SUCCESS_STATUSES)) {
+        "ok"
+    } else {
+        "error"
+    }
+    rec <- list(operation = outcome[["verb"]], outcome = outcome_label,
+                resource = outcome[["resource"]], effect_issued = ei,
+                scope = "system", preview = FALSE)
     rec <- add(rec, "authorized_via", outcome[["authorized_via"]])
     rec <- add(rec, "observed", outcome[["observed"]])
     rec <- add(rec, "changed", changed)
