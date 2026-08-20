@@ -92,8 +92,11 @@ reviewed increments** — hold at each increment before the next.
   `plan_hash` stays the integrity authority (the helper re-validates it under the lock;
   pkgops does not re-derive it). `interactive` defaults to `base::interactive()`.
   **This is the increment that makes pkgops mutation-capable** — the `DESCRIPTION` no
-  longer says mutation is out of scope. Rebased onto Part A; held draft pending the
-  Part B VM proof.
+  longer says mutation is out of scope. Rebased onto Part A (0.0.1.9); held draft
+  pending the Part B VM proof. Also: `.ensure_cid()` attaches the session
+  `correlation_id` to every left-open / effect-unknown condition that reaches the
+  caller (a mid-flight kill or a lost result), preserving its class/fields, so an
+  open intent is reconcilable -- needed by the Part B G-INT gate.
 - **Still NOT started: Part B** — the disposable-VM proof that drives the real pkgops
   path (34 gates via `pkgops::apt_<verb>()`, G12-G14 via the `rab-exercise` broker
   oracle, G11a/G11b via direct `pkexec`) and pins the durable record shape against a
