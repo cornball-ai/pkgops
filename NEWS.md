@@ -1,4 +1,4 @@
-# pkgops 0.0.1.8
+# pkgops 0.0.1.9
 
 Commit lifecycle (slice 3b): the **exported per-verb `apt_<verb>()` commit API**
 (§4.1 / §5). This is the increment that makes `pkgops` **mutation-capable** -- the
@@ -25,6 +25,40 @@ first release with a public code path that changes system state.
   (the `observed`/`changed` post-state fields the verdict feeds) and the real
   broker/polkit proof; and, if wanted, the combined plan-and-commit `apt_<verb>_run()`
   convenience (definable purely in terms of the two-call form).
+
+# pkgops 0.0.1.8
+
+Durable audit record grammar (VM-gate increment, Part A). The committed outcome
+now carries the fields the broker's `RECORD_SCHEMA` records, so the mutation-capable
+public API (held in PR #9) will write a complete, replayable audit record instead
+of the earlier minimal placeholder. Hermetic: the positive allow-list is enforced
+broker-side and proven in the disposable-VM proof (Part B); this increment mirrors
+the guard locally and adds no new dependency.
+
+* **Observer.** `.observe()` reads the committed preview's resolved records into
+  the record's `observed` object (the schema's only object field): `{status,
+  version}` per `package:arch` for transaction/configure, `{selection}` per matched
+  `package:arch` for hold. Hold records carry no architecture, so an unqualified
+  target records **one entry per matched architecture** (deterministic radix order)
+  rather than collapsing to a single row that could hide a change confined to one
+  arch. `.freeze_reader()` caches the post-commit read so the verdict and the
+  observed snapshot come from **one** read (no verify/observe TOCTOU).
+* **`state_changed` is an observed diff.** A pre-commit `.observe()` snapshot is
+  compared with the post-commit state; `state_changed` is `NA` (omitted) whenever
+  either side is unavailable. It is **never** inferred from `effect_issued`, which
+  means the effect was issued, not that on-disk state moved. `apt.update` reads no
+  observable post-state, so `observed`, `changed`, and `state_changed` are all
+  omitted (never a fabricated transition).
+* **`authorized_via` provenance.** Decided at the authorization site as `"pkexec"`
+  / `"autonomous"` / `"pkcheck"` and recorded onto the outcome, never reconstructed
+  downstream from partial state.
+* **Record grammar + guard.** `.outcome_record()` maps the outcome onto the broker
+  allow-list, omitting `NA`/`NULL` optionals; `verified` becomes `changed` only when
+  the post-state was actually read (a read failure omits `changed` rather than
+  asserting a false "did not change"). `.validate_record()` rejects any
+  non-allow-list field, broker-reserved key, or wrong type before a record is built.
+* Observation is **success-path only** (matching the wired-verification scope); the
+  failure-path `observed` shape stays deferred.
 
 # pkgops 0.0.1.7
 

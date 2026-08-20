@@ -68,22 +68,36 @@ reviewed increments** — hold at each increment before the next.
   (step 7) and outcome-before-signal holds. A known failure / left-open effect is
   not verified. The reader stays behind the seam, so `.commit_session` is fully
   hermetic (fake session-ops + fake pkcheck + fake reader).
-- **Increment 6 (this): the exported per-verb `apt_<verb>()` commit API**
-  (`R/commit_api.R`) — nine public entrypoints, each committing the
-  `pkgops_preview` its `apt_<verb>_preview()` twin produced. `.commit_verb()`
-  (in `R/commit.R`) adds the two checks `.commit_session` can't: the arg is a
-  `pkgops_preview`, and its verb is the one this fn commits (a verb/preview
-  mismatch is a `pkgops_bad_request`), both before anything opens; then delegates.
-  The `plan_hash` stays the integrity authority (the helper re-validates it under
-  the lock; pkgops does not re-derive it). `interactive` defaults to
-  `interactive()`. **This is the increment that makes pkgops mutation-capable** —
-  the `DESCRIPTION` no longer says mutation is out of scope.
-- **Still NOT started** (the VM-gated increment): the durable outcome-record
-  grammar (incl. the `observed`/`changed` post-state fields the verdict feeds), the
-  plain-intent refusal record grammar, and the exact pkcheck rc→outcome split,
-  pinned against a real broker/polkit; and, if wanted, the combined
-  `apt_<verb>_run()` convenience (plan+commit, defined in terms of the two-call
-  form). Then **slice 4: `rctl` apt.\*** (kept separate).
+- **VM-gate increment Part A (merged, `ee013da`, 0.0.1.8): durable audit record
+  grammar** — enrich the committed outcome with the broker `RECORD_SCHEMA` fields so
+  the exported API writes a complete record. `.observe()` reads the resolved records'
+  post-state into the record's `observed` object, keyed by `package:arch`
+  (`{status,version}` for txn/configure, `{selection}` for hold -- one entry per
+  matched arch, since an unqualified hold target can span arches); `.freeze_reader()`
+  gives verdict + observe one shared post-read. `state_changed` is a real pre/post
+  `.observe()` diff (D7 = S-B), `NA` when either side is unavailable, never inferred
+  from `effect_issued`; `apt.update` observes nothing, so observed/changed/state_changed
+  are all omitted. `.authorized_via()` records `pkexec`/`autonomous`/`pkcheck` at the
+  authorization site (`.authorize()` now returns `list(decision, via)`).
+  `.outcome_record()` maps onto the broker's 16-field allow-list (omitting `NA`/`NULL`
+  optionals; `verified` → `changed` only when the post-state was read), and
+  `.validate_record()` mirrors the broker guard. Observation is **success-path only**.
+  Plan: `runix/docs/pkgops-vm-gate-plan.md`.
+- **Increment 6 (this branch, PR #9, 0.0.1.9, held draft): the exported per-verb
+  `apt_<verb>()` commit API** (`R/commit_api.R`) — nine public entrypoints, each
+  committing the `pkgops_preview` its `apt_<verb>_preview()` twin produced.
+  `.commit_verb()` (in `R/commit.R`) adds the two checks `.commit_session` can't: the
+  arg is a `pkgops_preview`, and its verb is the one this fn commits (a verb/preview
+  mismatch is a `pkgops_bad_request`), both before anything opens; then delegates. The
+  `plan_hash` stays the integrity authority (the helper re-validates it under the lock;
+  pkgops does not re-derive it). `interactive` defaults to `base::interactive()`.
+  **This is the increment that makes pkgops mutation-capable** — the `DESCRIPTION` no
+  longer says mutation is out of scope. Rebased onto Part A; held draft pending the
+  Part B VM proof.
+- **Still NOT started: Part B** — the disposable-VM proof that drives the real pkgops
+  path (34 gates via `pkgops::apt_<verb>()`, G12-G14 via the `rab-exercise` broker
+  oracle, G11a/G11b via direct `pkexec`) and pins the durable record shape against a
+  real broker/polkit; then the `rctl apt.*` surface.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).

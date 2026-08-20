@@ -410,7 +410,9 @@ expect_inherits(r, "pkgops_outcome")
 expect_identical(r$verified, TRUE)
 expect_true(is.na(r$verify_detail))
 expect_equal(lg$seq, c("capability", "open", "commit", "write_outcome"))
-expect_equal(cr_ok$n, 1L)
+## the reader is read twice on a success txn: the pre-commit snapshot
+## (state_changed), and ONE cached post-read shared by the verdict + observation
+expect_equal(cr_ok$n, 2L)
 
 ## success + a DISAGREEING post-state -> verified FALSE + a detail, but the
 ## outcome is STILL returned (not a raised condition) and STILL written: a failed
@@ -455,7 +457,9 @@ lg <- newlog()
 r <- run_commit(ops_for(lg, cr("ok", "operation_failed", TRUE)), preview = prev1,
                 reader = cr_fail$reader)
 expect_inherits(r, "runix_operation_failed")
-expect_equal(cr_fail$n, 0L)                              # verification skipped
+## only the pre-commit snapshot reads on a failure path; the verdict + post-state
+## observation are success-path only, so no post-commit read happens
+expect_equal(cr_fail$n, 1L)
 expect_true("write_outcome" %in% lg$seq)                 # known close still written
 
 ## a LEFT-OPEN effect_unknown is not verified either (the effect is unknown) and
@@ -465,7 +469,7 @@ lg <- newlog()
 r <- run_commit(ops_for(lg, cr("effect_unknown", effect_issued = NA)),
                 preview = prev1, reader = cr_open$reader)
 expect_inherits(r, "runix_helper_bad_result")
-expect_equal(cr_open$n, 0L)
+expect_equal(cr_open$n, 1L)                              # only the pre-commit snapshot
 expect_false("write_outcome" %in% lg$seq)
 
 ## verification is INDEPENDENT of the helper status (4.7): a clean `ok` whose
@@ -476,3 +480,94 @@ r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
                 reader = cr_lie$reader)
 expect_identical(r$verified, FALSE)                      # helper said ok; the host disagrees
 expect_true(grepl("half-configured", r$verify_detail))
+
+## ============================================================================
+## Part A -- the durable record the commit writes (observed/changed/state_changed/
+## authorized_via), and state_changed from a real pre/post diff.
+## ============================================================================
+
+## a matching success commit: the record carries the full grammar --------------
+cr_match <- counting_reader(status = "installed", version = "1.2")
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = cr_match$reader)
+expect_inherits(r, "pkgops_outcome")
+rec <- lg$record
+expect_equal(rec$operation, "apt.install")
+expect_equal(rec$scope, "system")
+expect_identical(rec$preview, FALSE)
+expect_equal(rec$authorized_via, "pkcheck")              # machine, non-autonomous
+expect_identical(rec$changed, TRUE)                      # verified matched
+expect_identical(rec$observed_failed, FALSE)
+expect_equal(rec$observed, list("nginx:amd64" = list(status = "installed",
+                                                     version = "1.2")))
+expect_false(any(names(rec) %in% pkgops:::.PKGOPS_RECORD_RESERVED))
+expect_true(all(names(rec) %in% names(pkgops:::.PKGOPS_RECORD_FIELDS)))
+
+## a DISAGREEING post-state: changed=FALSE + observed_reason, still written ------
+cr_dis <- counting_reader(status = "installed", version = "1.1")
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = cr_dis$reader)
+expect_identical(lg$record$changed, FALSE)
+expect_true(grepl("version 1.1", lg$record$observed_reason))
+
+## state_changed from a REAL pre/post diff: a stateful reader returns the
+## pre-state on the first read and the post-state after, so the pre-commit
+## snapshot differs from the post-state -> state_changed TRUE.
+stateful_reader <- function(pre, post) {
+    e <- new.env(parent = emptyenv())
+    e$n <- 0L
+    list(installed = function() {
+        e$n <- e$n + 1L
+        if (e$n == 1L) pre else post
+    }, selections = empty_sel)
+}
+absent <- data.frame(package = character(), version = character(),
+                     architecture = character(), status = character(),
+                     stringsAsFactors = FALSE)
+installed <- data.frame(package = "nginx", version = "1.2",
+                        architecture = "amd64", status = "installed",
+                        stringsAsFactors = FALSE)
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = stateful_reader(absent, installed))
+expect_identical(lg$record$state_changed, TRUE)          # absent -> installed
+expect_identical(lg$record$changed, TRUE)                # verified against post
+
+## no on-disk change (pre == post) -> state_changed FALSE -----------------------
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = stateful_reader(installed, installed))
+expect_identical(lg$record$state_changed, FALSE)
+
+## a read failure -> observed_failed TRUE, changed + observed OMITTED -----------
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = boom_reader)
+expect_identical(lg$record$observed_failed, TRUE)
+expect_false("changed" %in% names(lg$record))
+expect_false("observed" %in% names(lg$record))
+
+## authorized_via reflects the mode: interactive -> pkexec ----------------------
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)), preview = prev1,
+                reader = counting_reader()$reader, interactive = TRUE)
+expect_equal(lg$record$authorized_via, "pkexec")
+
+## an autonomous verb authorized in machine mode -> authorized_via = autonomous --
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "ok", TRUE)),
+                preview = mkprev(verb = "apt.update", resource = "@indexes",
+                                 packages = character(0)),
+                reader = counting_reader()$reader,
+                pkcheck = function(a) if (grepl("update$", a)) 0L else 1L)
+expect_equal(lg$record$authorized_via, "autonomous")
+
+## a known FAILURE record still carries authorized_via (the intent was authorized)
+lg <- newlog()
+r <- run_commit(ops_for(lg, cr("ok", "operation_failed", TRUE)), preview = prev1,
+                reader = counting_reader()$reader)
+expect_inherits(r, "runix_operation_failed")
+expect_equal(lg$record$authorized_via, "pkcheck")        # authorized before it failed
+expect_false("changed" %in% names(lg$record))            # not verified on a failure

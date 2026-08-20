@@ -14,30 +14,117 @@
 ## default). A caller may override for a test/staging broker.
 .PKGOPS_BROKER_SOCKET <- "/run/runix-audit.sock"
 
-## The durable outcome record pkgops hands to write_outcome. runix's C wraps it as
+## The durable audit record pkgops hands to write_outcome. runix's C wraps it as
 ## {type:"write_outcome", binding, record} and the broker appends `record` to the
-## audit line, filling correlation_id (from the binding), phase, host, pid, actor
-## and time itself (durable-audit-contract.md 112). `effect_issued` is the
-## broker's gate and is ALWAYS a real boolean here: the effect-unknown path leaves
-## the intent open and never reaches write_outcome, so this builder rejects an NA.
+## audit line, stamping correlation_id (from the binding), phase, host, pid, actor,
+## time and schema_version itself (durable-audit-contract.md 112).
 ##
-## BOUNDARY [REVIEW]: this record is intentionally MINIMAL and carries only the
-## audit-schema fields pkgops authoritatively owns before verification
-## (`operation`, `resource`, `effect_issued`). The post-state fields
-## (`observed`/`changed`/`state_changed`) are the pkgstate-verification
-## increment's OUTPUT and are added there; `authorized_via` is the polkit
-## increment's. The exact grammar and its alignment with the broker's
-## RECORD_SCHEMA / record_schema_version (which rejects unknown fields) is pinned
-## in the VM-gated increment, where write_outcome meets a real broker.
+## The record's field grammar is pinned to the broker's RECORD_SCHEMA
+## (runix-audit-broker/src/json.c): a CLOSED allow-list of 16 domain fields, each
+## with a fixed type, and the broker HARD-REJECTS (schema_invalid) any field not on
+## the list or any broker-reserved key a client sends. The R adapter only rejects
+## the reserved keys locally, so `.validate_record()` below is pkgops's own guard
+## that the record it builds conforms -- the real allow-list + type enforcement is
+## broker-side and proven in the VM-gated increment.
+.PKGOPS_RECORD_FIELDS <- c(operation = "string", outcome = "string",
+                           resource = "string", scope = "string",
+                           audit_scope = "string", authorized_via = "string",
+                           completion_method = "string",
+                           job_result = "string", observed_reason = "string",
+                           preview = "bool", effect_issued = "bool",
+                           changed = "bool", state_changed = "bool",
+                           observed_failed = "bool", elapsed = "number",
+                           observed = "object")
+
+## The broker-stamped keys a client must NEVER send (audit_broker_sink.R:200-202);
+## including one is a runix_broker_reserved_field error at the broker.
+.PKGOPS_RECORD_RESERVED <- c("schema_version", "record_type",
+                             "correlation_id", "phase", "host", "pid",
+                             "actor", "time", "binding", "broker")
+
+## Whether a value matches its allow-list type: a scalar non-NA string/bool/number
+## (number >= 0), or a named-list object.
+.record_type_ok <- function(value, type) {
+    switch(type, string = is.character(value) && length(value) == 1L &&
+           !is.na(value), bool = is.logical(value) && length(value) == 1L &&
+           !is.na(value), number = is.numeric(value) && length(value) == 1L &&
+           !is.na(value) && value >= 0, object = is.list(value) &&
+           (length(value) == 0L || !is.null(names(value))), FALSE)
+}
+
+## Assert a built record conforms BEFORE it is sent: fully named, no reserved key,
+## every field on the allow-list, every value the right type. A non-conforming
+## record is a pkgops bug -> fail closed, never sent (the real broker would reject
+## it as schema_invalid; this catches it hermetically).
+.validate_record <- function(rec) {
+    nm <- names(rec)
+    if (length(rec) > 0L && (is.null(nm) || any(!nzchar(nm)))) {
+        stop_pkgops("internal: outcome record must be a fully-named list",
+                    class = "pkgops_bad_request")
+    }
+    bad <- intersect(nm, .PKGOPS_RECORD_RESERVED)
+    if (length(bad) > 0L) {
+        stop_pkgops("internal: outcome record carries a broker-reserved field: ",
+                    bad[1L], class = "pkgops_bad_request")
+    }
+    unknown <- setdiff(nm, names(.PKGOPS_RECORD_FIELDS))
+    if (length(unknown) > 0L) {
+        stop_pkgops("internal: outcome record carries a non-allow-list field: ",
+                    unknown[1L], class = "pkgops_bad_request")
+    }
+    for (f in nm) {
+        if (!.record_type_ok(rec[[f]], unname(.PKGOPS_RECORD_FIELDS[f]))) {
+            stop_pkgops("internal: outcome record field `", f,
+                        "` has the wrong type", class = "pkgops_bad_request")
+        }
+    }
+    rec
+}
+
+## Build the durable record from a closed effect-intent outcome (VM-gate plan 2.2).
+## Maps pkgops's outcome fields onto the allow-list: `verified` -> `changed` (but
+## unknown, hence omitted, when the post-read failed -- pkgops cannot then claim the
+## state did not change), `verify_detail` -> `observed_reason`, the captured
+## post-state -> `observed`, plus `authorized_via` / `scope` / `preview` /
+## `observed_failed` / `state_changed`. An optional field is OMITTED (never an
+## explicit key) when NA/NULL: the broker treats an absent optional field as null,
+## and this keeps the record deterministic. `effect_issued` is always a known
+## boolean here (the effect-unknown path never reaches write_outcome).
+## NB exact `[[` access throughout: `$` partial-matches, and `observed` is a strict
+## prefix of `observed_failed`/`observed_reason`, so `outcome$observed` would
+## resolve to the wrong field when the `observed` element is absent.
 .outcome_record <- function(outcome) {
-    ei <- outcome$effect_issued
+    ei <- outcome[["effect_issued"]]
     if (!(length(ei) == 1L && is.logical(ei) && !is.na(ei))) {
         ## defensive: write_outcome is only reached on a KNOWN-effect close
         stop_pkgops("internal: outcome record needs a known effect_issued",
                     class = "pkgops_bad_request")
     }
-    list(operation = outcome$verb, resource = outcome$resource,
-         effect_issued = ei)
+    ## a read failure leaves the functional verdict unknown -> omit `changed`,
+    ## never write a false "did not change".
+    changed <- if (isTRUE(outcome[["observed_failed"]])) {
+        NA
+    } else {
+        outcome[["verified"]]
+    }
+    add <- function(rec, key, value) {
+        if (is.null(value) || (is.atomic(value) && length(value) == 1L &&
+                is.na(value))) {
+            rec
+        } else {
+            rec[[key]] <- value
+            rec
+        }
+    }
+    rec <- list(operation = outcome[["verb"]], resource = outcome[["resource"]],
+                effect_issued = ei, scope = "system", preview = FALSE)
+    rec <- add(rec, "authorized_via", outcome[["authorized_via"]])
+    rec <- add(rec, "observed", outcome[["observed"]])
+    rec <- add(rec, "changed", changed)
+    rec <- add(rec, "state_changed", outcome[["state_changed"]])
+    rec <- add(rec, "observed_reason", outcome[["verify_detail"]])
+    rec <- add(rec, "observed_failed", outcome[["observed_failed"]])
+    .validate_record(rec)
 }
 
 ## Map a persist failure (write_outcome status other than "ok") to a fail-closed
@@ -63,27 +150,34 @@
                             persist_status = wr$status, detail = detail))
 }
 
-## step 6 (contract 4.7): cross-check the committed preview's resolved records
-## against native ground truth and CAPTURE the verdict into the outcome. This is
-## OBSERVATIONAL -- it never changes the close/open decision and never raises: a
-## disagreeing post-state is `verified = FALSE` + a detail on the outcome, not a
-## signal. So the outcome is still written (step 7) and outcome-before-signal
-## holds. .verify() reads only the plan (preview) and the ground truth, never the
-## helper's self-report (4.7), and by the time this runs the commit has applied,
-## so the reader observes the POST-state.
+## step 6 (contract 4.7 / VM-gate plan 2.2-2.4): cross-check the committed preview's
+## resolved records against native ground truth and CAPTURE onto the outcome the
+## verdict (verified/verify_detail), the observed POST-state, the post-read-failure
+## flag, and the pre/post diff (state_changed, from the pre-commit `before`
+## snapshot). OBSERVATIONAL -- it never changes the close/open decision and never
+## raises: a disagreeing post-state is verified = FALSE + a detail, not a signal, so
+## the outcome is still written (step 7) and outcome-before-signal holds. .verify()
+## reads only the plan and the ground truth, never the helper's self-report (4.7);
+## by the time this runs the commit has applied, so the reader sees the POST-state.
 ##
-## .verify() already normalizes malformed reader/record data to verified = FALSE
+## Both .verify() and .observe() already normalize malformed reader/record data
 ## without raising; the extra tryCatch is belt-and-suspenders so a residual error
-## can never abort before write_outcome. The durable-record post-state fields
-## (observed/changed) that carry this verdict to the broker are the VM-gated
-## increment's; here the verdict lands on the returned outcome object only.
-.verify_and_capture <- function(outcome, preview) {
-    v <- tryCatch(.verify(preview), error = function(e) {
+## can never abort before write_outcome.
+.capture_post <- function(outcome, preview, before) {
+    ## the verdict and the observed post-state derive from ONE cached read, so they
+    ## describe the same snapshot (no double dpkg read, no post-lock TOCTOU).
+    post_reader <- .freeze_reader(pkgstate_reader())
+    v <- tryCatch(.verify(preview, post_reader), error = function(e) {
         list(verified = FALSE,
              detail = paste0("verification error: ", conditionMessage(e)))
     })
+    after <- tryCatch(.observe(preview, post_reader),
+                      error = function(e) list(state = NULL, read_failed = TRUE))
     outcome$verified <- v$verified
     outcome$verify_detail <- v$detail
+    outcome$observed <- after$state
+    outcome$observed_failed <- isTRUE(after$read_failed)
+    outcome$state_changed <- .state_changed(before, after)
     outcome
 }
 
@@ -273,9 +367,9 @@
     ## effect intent: it records a PLAIN intent + terminal outcome and stops, so no
     ## unused effect receipt is minted. A failed check fails closed with nothing
     ## opened.
-    decision <- .authorize(verb_spec, interactive)
-    if (!identical(decision, "authorized")) {
-        return(.refuse(ops, socket_path, preview, decision))
+    dec <- .authorize(verb_spec, interactive)
+    if (!identical(dec$decision, "authorized")) {
+        return(.refuse(ops, socket_path, preview, dec$decision))
     }
 
     ## step 3 -- open the effect-required intent. The receipt + outcome binding
@@ -287,22 +381,35 @@
                         plan_schema = preview$plan_schema,
                         plan_hash = preview$plan_hash)
 
+    ## step 3.5 -- PRE-COMMIT snapshot (D7 = S-B): read the resolved records' state
+    ## BEFORE the commit applies, so state_changed can be a real observed diff and
+    ## is never inferred from effect_issued. On the same reader seam as verification
+    ## (hermetic); never raises (a pre-read failure -> state_changed NA later).
+    before <- .observe(preview)
+
     ## From here the intent is OPEN and every path must attempt to close it before
     ## returning or signaling. steps 4-5 (commit + classify) yield an
     ## (outcome, condition, leave_open) even if the commit itself raised.
     decided <- .commit_and_classify(ops, session, preview, lock_timeout,
                                     deadline_ms)
 
-    ## step 6 -- pkgstate VERIFICATION (contract 4.7). Only on the success path
-    ## (is.null(condition): an ok/no_op that will be RETURNED, not signaled):
-    ## cross-check the committed preview against native ground truth and capture
-    ## the verdict onto the outcome. A known failure already carries its own
-    ## condition and a left-open effect is unknown, so neither has a trustworthy
-    ## post-state to check. This is observational -- never raises, never changes
-    ## close/open -- so the outcome is still written below and the
-    ## outcome-before-signal order holds.
+    ## authorization provenance is known independent of success/failure (the intent
+    ## was authorized before it opened), so it is recorded on any classified outcome.
+    ## effect-unknown (leave_open, no outcome to close) needs no record.
+    if (!is.null(decided$outcome)) {
+        decided$outcome$authorized_via <- dec$via
+    }
+
+    ## step 6 -- pkgstate VERIFICATION + post-state capture (contract 4.7 / VM-gate
+    ## plan 2.2-2.4). Only on the success path (is.null(condition): an ok/no_op that
+    ## will be RETURNED, not signaled): cross-check the committed preview against
+    ## native ground truth and capture the verdict + the observed post-state + the
+    ## pre/post diff onto the outcome. A known failure carries its own condition and
+    ## a left-open effect is unknown, so neither has a trustworthy post-state. This
+    ## is observational -- never raises, never changes close/open -- so the outcome
+    ## is still written below and the outcome-before-signal order holds.
     if (is.null(decided$condition)) {
-        decided$outcome <- .verify_and_capture(decided$outcome, preview)
+        decided$outcome <- .capture_post(decided$outcome, preview, before)
     }
 
     ## step 7 -- close the durable intent, UNLESS the effect is genuinely unknown
