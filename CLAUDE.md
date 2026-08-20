@@ -68,42 +68,53 @@ reviewed increments** — hold at each increment before the next.
   (step 7) and outcome-before-signal holds. A known failure / left-open effect is
   not verified. The reader stays behind the seam, so `.commit_session` is fully
   hermetic (fake session-ops + fake pkcheck + fake reader).
-- **Increment 6 (draft PR #9, HELD): exported per-verb `apt_<verb>()` API** — the
-  nine `apt_<verb>(preview, ...)` commit wrappers with the preview
-  `{verb,resource,plan_hash}` match check; interactive defaults to
-  `base::interactive()`. This makes pkgops **mutation-capable**. Held pending the
-  VM proof (Part B) that the complete public path + durable record shape hold
-  against a real broker/polkit.
-- **VM-gate increment Part A (this): durable audit record grammar** — enrich the
-  committed outcome with the broker `RECORD_SCHEMA` fields so the exported API
-  writes a complete record. `.observe()` reads the resolved records' post-state
-  into the record's `observed` object, keyed by `package:arch` (`{status,version}`
-  for txn/configure, `{selection}` for hold -- one entry per matched arch, since an
-  unqualified hold target can span arches); `.freeze_reader()` gives verdict +
-  observe one shared post-read. `state_changed` is a real pre/post `.observe()` diff
-  (D7 = S-B), `NA` when either side is unavailable, never inferred from
-  `effect_issued`; `apt.update` observes nothing, so observed/changed/state_changed
-  are all omitted.
-  `.authorized_via()` records `pkexec`/`autonomous`/`pkcheck` at the authorization
-  site (`.authorize()` now returns `list(decision, via)`). `.outcome_record()`
-  maps onto the broker's 16-field allow-list (omitting `NA`/`NULL` optionals;
-  `verified` → `changed` only when the post-state was read), and
-  `.validate_record()` mirrors the broker guard (rejects non-allow-list field,
-  reserved key, wrong type). Observation is **success-path only**; the failure-path
-  `observed` shape stays deferred. Plan: `runix/docs/pkgops-vm-gate-plan.md`.
-  - **Part B follow-up (the coarse `outcome`)**: `RECORD_SCHEMA` marks `operation`
-    and `outcome` REQUIRED, so a record without `outcome` is `schema_invalid` at
-    `write_outcome` — a Part B finding the hermetic fake broker could not surface.
-    `.outcome_record()` now derives the coarse `outcome` from the closed status
-    (`ok` for `ok`/`no_op`, `error` for every closed failure/refusal), keeping the
-    detailed per-package result in `observed`. `.validate_record()` enforces the
-    required pair locally (`.PKGOPS_RECORD_REQUIRED`). The R-level refuse path
-    (`session_ops.R`) already carried `outcome` (`intent` + status); the native
-    effect-session open_intent gained the field in runix (`effect_session.c`).
-- **Still NOT started** (later increments, each its own review): **Part B** — the
-  disposable-VM proof that pins the durable record grammar, the plain-intent
-  refusal record grammar, and the exact pkcheck rc→outcome split against a real
-  broker/polkit; then the `rctl apt.*` surface.
+- **VM-gate increment Part A (merged, `ee013da`, 0.0.1.8): durable audit record
+  grammar** — enrich the committed outcome with the broker `RECORD_SCHEMA` fields so
+  the exported API writes a complete record. `.observe()` reads the resolved records'
+  post-state into the record's `observed` object, keyed by `package:arch`
+  (`{status,version}` for txn/configure, `{selection}` for hold -- one entry per
+  matched arch, since an unqualified hold target can span arches); `.freeze_reader()`
+  gives verdict + observe one shared post-read. `state_changed` is a real pre/post
+  `.observe()` diff (D7 = S-B), `NA` when either side is unavailable, never inferred
+  from `effect_issued`; `apt.update` observes nothing, so observed/changed/state_changed
+  are all omitted. `.authorized_via()` records `pkexec`/`autonomous`/`pkcheck` at the
+  authorization site (`.authorize()` now returns `list(decision, via)`).
+  `.outcome_record()` maps onto the broker's 16-field allow-list (omitting `NA`/`NULL`
+  optionals; `verified` → `changed` only when the post-state was read), and
+  `.validate_record()` mirrors the broker guard. Observation is **success-path only**.
+  Plan: `runix/docs/pkgops-vm-gate-plan.md`.
+- **Coarse `outcome` conformance (merged, 0.0.1.9)**: `RECORD_SCHEMA` marks
+  `operation` and `outcome` REQUIRED, so a record without `outcome` is
+  `schema_invalid` at `write_outcome` — a Part B finding the hermetic fake broker
+  could not surface. `.outcome_record()` derives the coarse `outcome` from the closed
+  status (`ok` for `ok`/`no_op`, `error` for every closed failure/refusal), keeping
+  the detailed per-package result in `observed`; `.validate_record()` enforces the
+  required pair (`.PKGOPS_RECORD_REQUIRED`). The R-level refuse path
+  (`session_ops.R`) already carried `outcome`; the native effect-session
+  `open_intent` gained it in runix (`effect_session.c`).
+- **Increment 6 (this branch, PR #9, 0.0.1.10, held draft): the exported per-verb
+  `apt_<verb>()` commit API** (`R/commit_api.R`) — nine public entrypoints, each
+  committing the `pkgops_preview` its `apt_<verb>_preview()` twin produced.
+  `.commit_verb()` (in `R/commit.R`) adds the two checks `.commit_session` can't: the
+  arg is a `pkgops_preview`, and its verb is the one this fn commits (a verb/preview
+  mismatch is a `pkgops_bad_request`), both before anything opens; then delegates. The
+  `plan_hash` stays the integrity authority (the helper re-validates it under the lock;
+  pkgops does not re-derive it). `interactive` defaults to `base::interactive()`.
+  **This is the increment that makes pkgops mutation-capable** — the `DESCRIPTION` no
+  longer says mutation is out of scope. Rebased onto Part A + the coarse-`outcome`
+  fix (0.0.1.9); held draft pending the Part B VM proof. Also: `.ensure_cid()`
+  attaches the session
+  `correlation_id` to every left-open / effect-unknown condition that reaches the
+  caller (a mid-flight kill or a lost result), preserving its class/fields, so an
+  open intent is reconcilable -- needed by the Part B G-INT gate.
+- **Part B (disposable-VM proof): PASSED** — the real broker/polkit VM run drove the
+  whole public path on a fresh disposable guest (every functional gate via
+  `pkgops::apt_<verb>()`; G12-G14 + G15 via the `rab-exercise` broker oracle;
+  G11a/G11b via direct `pkexec`): polkit matrix 23/23, §7 gates 68/68. It surfaced
+  and fixed the runix native `open_intent`/empty-resource gaps, the coarse-`outcome`
+  omission (0.0.1.9), and a pkgexec pre-redemption cid bug (G10, `apt_locked`).
+  G9/G-OWN are pkgops preview-side refusals (no intent opened), not
+  broker-redemption refusals. Next: the `rctl apt.*` surface.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).

@@ -1,7 +1,7 @@
 Package: pkgops
 Type: Package
 Title: Unprivileged Issuer for 'APT' Package-State Mutations
-Version: 0.0.1.9
+Version: 0.0.1.10
 Date: 2026-08-20
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"), email = "troy@cornball.ai",
@@ -10,11 +10,12 @@ Authors@R: c(
 Description: The unprivileged R issuer for authorized 'APT' package-state
     mutations in the Runix system-administration framework. It plans a change
     with the read-only 'runix-apt-preview' helper, returning a typed, advisory
-    preview whose plan digest binds exactly what a later commit would apply.
-    Mutation itself is out of scope of this release: previews open no intent,
-    take no lock, and mint nothing. Reads of installed state live in the sibling
-    'pkgstate'; the privileged effectors and the preview helper are shipped
-    separately by 'pkgexec'.
+    preview whose plan digest binds exactly what a commit would apply, then
+    commits that exact plan through the privileged effect-session: it negotiates
+    an effect receipt, authorizes the verb through 'polkit', opens an
+    effect-bound intent, and records a durable, verified outcome. The privileged
+    effectors and the preview helper are shipped separately by 'pkgexec'; reads
+    of installed state live in the sibling 'pkgstate'.
 License: MIT + file LICENSE
 OS_type: unix
 SystemRequirements: pkgexec (provides the unprivileged 'runix-apt-preview'

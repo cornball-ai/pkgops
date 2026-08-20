@@ -186,6 +186,7 @@ r <- run_commit(ops_for(lg, cr("effect_unknown", effect_issued = NA)))
 expect_inherits(r, "runix_helper_bad_result")
 expect_false("write_outcome" %in% lg$seq)                # intent left open
 expect_equal(lg$seq, c("capability", "open", "commit"))
+expect_equal(r$correlation_id, CID)                      # left-open intent stays reconcilable
 
 ## ---- a RAISED commit is effect-unknown: left open, original re-signaled -----
 lg <- newlog()
@@ -196,6 +197,59 @@ r <- run_commit(ops_for(lg, boom, raise = TRUE))
 expect_inherits(r, "runix_capability_unavailable")       # the original, re-signaled
 expect_false("write_outcome" %in% lg$seq)                # left open
 expect_equal(lg$seq, c("capability", "open", "commit"))
+## the raw runix condition carried no cid; .ensure_cid attaches the SESSION cid so
+## the killed/lost intent is reconcilable (G-INT), without replacing its class/fields
+expect_equal(r$correlation_id, CID)
+expect_inherits(r, "runix_capability_unavailable")       # class preserved
+expect_equal(conditionMessage(r), "no closefrom primitive")   # message preserved
+
+## ---- a left-open result whose delivered frame LOST its cid falls back to the
+## session cid (never leaving an unreconcilable open intent) -------------------
+lg <- newlog()
+lost <- list(session_status = "effect_unknown", status = NULL,
+             effect_issued = NA, correlation_id = NULL, detail = NULL)
+r <- run_commit(ops_for(lg, lost))
+expect_inherits(r, "runix_helper_bad_result")
+expect_false("write_outcome" %in% lg$seq)
+expect_equal(r$correlation_id, CID)                      # fell back to the session cid
+
+## ---- .ensure_cid: an EMPTY or MALFORMED existing cid is REPLACED (not only a
+## missing/NA one), while a VALID broker cid is kept. This is the G-INT invariant:
+## an open intent must never be left with an unreconcilable cid ------------------
+ec <- pkgops:::.ensure_cid
+mkcond <- function(cid) structure(list(message = "m", call = NULL,
+                                       correlation_id = cid),
+                                  class = c("runix_error", "error", "condition"))
+OTHER <- "20250202000000000000-fedcba9876543210"       # a DIFFERENT valid broker cid
+expect_equal(ec(mkcond(NULL), CID)$correlation_id, CID)            # missing -> stamped
+expect_equal(ec(mkcond(NA_character_), CID)$correlation_id, CID)   # NA -> stamped
+expect_equal(ec(mkcond(""), CID)$correlation_id, CID)             # empty -> REPLACED
+expect_equal(ec(mkcond("not-a-broker-cid"), CID)$correlation_id, CID)  # malformed -> REPLACED
+expect_equal(ec(mkcond(c(CID, CID)), CID)$correlation_id, CID)    # non-scalar -> REPLACED
+expect_equal(ec(mkcond(OTHER), CID)$correlation_id, OTHER)        # valid cid KEPT
+## a non-well-formed session cid is never stamped (no replacing bad with bad)
+expect_equal(ec(mkcond(""), "bad")$correlation_id, "")
+expect_null(ec(mkcond(NULL), "bad")$correlation_id)
+## class + message preserved through the replacement
+badc <- ec(mkcond(""), CID)
+expect_inherits(badc, "runix_error")
+expect_equal(conditionMessage(badc), "m")
+
+## ---- G-INT end to end: a raised commit whose condition carries an EMPTY or
+## MALFORMED cid still leaves a reconcilable open intent (the bad cid is replaced
+## with the session cid), class + message intact --------------------------------
+for (badcid in list("", "not-a-broker-cid", NA_character_)) {
+    lg <- newlog()
+    boom2 <- structure(list(message = "killed mid-commit", call = NULL,
+                            correlation_id = badcid),
+                       class = c("runix_capability_unavailable", "runix_error",
+                                 "error", "condition"))
+    r <- run_commit(ops_for(lg, boom2, raise = TRUE))
+    expect_inherits(r, "runix_capability_unavailable")
+    expect_false("write_outcome" %in% lg$seq)            # left open
+    expect_equal(r$correlation_id, CID)                  # bad cid replaced by session cid
+    expect_equal(conditionMessage(r), "killed mid-commit")
+}
 
 ## ---- persist failure: write_outcome ran, effect open, broker_error ---------
 lg <- newlog()
