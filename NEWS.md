@@ -1,3 +1,15 @@
+# pkgops 0.0.1.9
+
+The durable audit record now carries the broker-required coarse `outcome` field.
+`RECORD_SCHEMA` marks `operation` and `outcome` REQUIRED, so a record without
+`outcome` is `schema_invalid` at `write_outcome`; the disposable-VM proof (Part B)
+surfaced the omission the hermetic fake broker could not. `.outcome_record()` now
+derives `outcome` from the closed status classification (`ok` for `ok`/`no_op`,
+`error` for every closed failure or refusal), keeping the detailed per-package
+result in `observed`. `.validate_record()` enforces the required pair locally so a
+future omission fails hermetically rather than only in the VM.
+
+
 # pkgops 0.0.1.8
 
 Durable audit record grammar (VM-gate increment, Part A). The committed outcome
