@@ -117,6 +117,7 @@ expect_equal(lg$seq, c("capability", "open", "commit", "write_outcome"))
 expect_identical(lg$record$effect_issued, TRUE)          # the broker's gate
 expect_equal(lg$record$operation, "apt.install")
 expect_equal(lg$record$resource, "nginx")
+expect_equal(lg$record$outcome, "ok")                    # broker-required, success -> ok
 
 ## capability + open received the preview's schema/verb/resource/hash ----------
 expect_equal(lg$cap$plan_schema, 1L)
@@ -132,6 +133,7 @@ r <- run_commit(ops_for(lg, cr("ok", "no_op", FALSE)))
 expect_inherits(r, "pkgops_outcome")
 expect_equal(r$status, "no_op")
 expect_identical(lg$record$effect_issued, FALSE)
+expect_equal(lg$record$outcome, "ok")                    # no_op is a success -> ok
 expect_true("write_outcome" %in% lg$seq)
 
 ## ---- known failure: outcome WRITTEN, then the mapped condition signaled -----
@@ -142,6 +144,7 @@ expect_inherits(r, "pkgops_error")
 # outcome-closed-before-signal: write_outcome ran before we got the condition
 expect_equal(lg$seq, c("capability", "open", "commit", "write_outcome"))
 expect_identical(lg$record$effect_issued, TRUE)          # the effect happened
+expect_equal(lg$record$outcome, "error")                 # a closed failure -> error
 expect_equal(r$verb, "apt.install")
 expect_equal(r$detail, "dpkg exited 100")
 

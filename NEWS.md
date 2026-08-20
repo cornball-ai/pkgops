@@ -1,4 +1,4 @@
-# pkgops 0.0.1.9
+# pkgops 0.0.1.10
 
 Commit lifecycle (slice 3b): the **exported per-verb `apt_<verb>()` commit API**
 (§4.1 / §5). This is the increment that makes `pkgops` **mutation-capable** -- the
@@ -21,7 +21,8 @@ first release with a public code path that changes system state.
   `pkcheck`, whose denial or approval challenge is a durably-audited refusal, never
   a prompt). `lock_timeout` / `deadline_ms` / `socket_path` pass through.
 * The `DESCRIPTION` no longer says mutation is out of scope.
-* Rebased onto the merged Part A durable-record grammar (0.0.1.8, below). A
+* Rebased onto the merged Part A durable-record grammar (0.0.1.8) plus the
+  coarse-`outcome` conformance fix (0.0.1.9, below). A
   left-open / effect-unknown condition that reaches the caller -- a mid-flight kill,
   or a lost result -- now carries the session `correlation_id` (added, never
   replacing its class or fields), so an open intent stays **reconcilable**; the cid
@@ -30,6 +31,18 @@ first release with a public code path that changes system state.
   disposable-VM proof of the whole public path; and, if wanted, the combined
   plan-and-commit `apt_<verb>_run()` convenience (definable purely in terms of the
   two-call form).
+
+
+# pkgops 0.0.1.9
+
+The durable audit record now carries the broker-required coarse `outcome` field.
+`RECORD_SCHEMA` marks `operation` and `outcome` REQUIRED, so a record without
+`outcome` is `schema_invalid` at `write_outcome`; the disposable-VM proof (Part B)
+surfaced the omission the hermetic fake broker could not. `.outcome_record()` now
+derives `outcome` from the closed status classification (`ok` for `ok`/`no_op`,
+`error` for every closed failure or refusal), keeping the detailed per-package
+result in `observed`. `.validate_record()` enforces the required pair locally so a
+future omission fails hermetically rather than only in the VM.
 
 # pkgops 0.0.1.8
 

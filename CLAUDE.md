@@ -83,7 +83,16 @@ reviewed increments** — hold at each increment before the next.
   optionals; `verified` → `changed` only when the post-state was read), and
   `.validate_record()` mirrors the broker guard. Observation is **success-path only**.
   Plan: `runix/docs/pkgops-vm-gate-plan.md`.
-- **Increment 6 (this branch, PR #9, 0.0.1.9, held draft): the exported per-verb
+- **Coarse `outcome` conformance (merged, 0.0.1.9)**: `RECORD_SCHEMA` marks
+  `operation` and `outcome` REQUIRED, so a record without `outcome` is
+  `schema_invalid` at `write_outcome` — a Part B finding the hermetic fake broker
+  could not surface. `.outcome_record()` derives the coarse `outcome` from the closed
+  status (`ok` for `ok`/`no_op`, `error` for every closed failure/refusal), keeping
+  the detailed per-package result in `observed`; `.validate_record()` enforces the
+  required pair (`.PKGOPS_RECORD_REQUIRED`). The R-level refuse path
+  (`session_ops.R`) already carried `outcome`; the native effect-session
+  `open_intent` gained it in runix (`effect_session.c`).
+- **Increment 6 (this branch, PR #9, 0.0.1.10, held draft): the exported per-verb
   `apt_<verb>()` commit API** (`R/commit_api.R`) — nine public entrypoints, each
   committing the `pkgops_preview` its `apt_<verb>_preview()` twin produced.
   `.commit_verb()` (in `R/commit.R`) adds the two checks `.commit_session` can't: the
@@ -92,16 +101,20 @@ reviewed increments** — hold at each increment before the next.
   `plan_hash` stays the integrity authority (the helper re-validates it under the lock;
   pkgops does not re-derive it). `interactive` defaults to `base::interactive()`.
   **This is the increment that makes pkgops mutation-capable** — the `DESCRIPTION` no
-  longer says mutation is out of scope. Rebased onto Part A (0.0.1.9); held draft
-  pending the Part B VM proof. Also: `.ensure_cid()` attaches the session
+  longer says mutation is out of scope. Rebased onto Part A + the coarse-`outcome`
+  fix (0.0.1.9); held draft pending the Part B VM proof. Also: `.ensure_cid()`
+  attaches the session
   `correlation_id` to every left-open / effect-unknown condition that reaches the
   caller (a mid-flight kill or a lost result), preserving its class/fields, so an
   open intent is reconcilable -- needed by the Part B G-INT gate.
-- **Still NOT started: Part B** — the disposable-VM proof that drives the real pkgops
-  path (every functional gate via `pkgops::apt_<verb>()`; G12-G14 + G15 via the
-  `rab-exercise` broker oracle; G11a/G11b via direct `pkexec`) and pins the durable
-  record shape against a real broker/polkit; then the `rctl apt.*` surface. G9/G-OWN
-  are pkgops preview-side refusals (no intent opened), not broker-redemption refusals.
+- **Part B (disposable-VM proof): PASSED** — the real broker/polkit VM run drove the
+  whole public path on a fresh disposable guest (every functional gate via
+  `pkgops::apt_<verb>()`; G12-G14 + G15 via the `rab-exercise` broker oracle;
+  G11a/G11b via direct `pkexec`): polkit matrix 23/23, §7 gates 68/68. It surfaced
+  and fixed the runix native `open_intent`/empty-resource gaps, the coarse-`outcome`
+  omission (0.0.1.9), and a pkgexec pre-redemption cid bug (G10, `apt_locked`).
+  G9/G-OWN are pkgops preview-side refusals (no intent opened), not
+  broker-redemption refusals. Next: the `rctl apt.*` surface.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).
