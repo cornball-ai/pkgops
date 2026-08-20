@@ -183,6 +183,7 @@ r <- run_commit(ops_for(lg, cr("effect_unknown", effect_issued = NA)))
 expect_inherits(r, "runix_helper_bad_result")
 expect_false("write_outcome" %in% lg$seq)                # intent left open
 expect_equal(lg$seq, c("capability", "open", "commit"))
+expect_equal(r$correlation_id, CID)                      # left-open intent stays reconcilable
 
 ## ---- a RAISED commit is effect-unknown: left open, original re-signaled -----
 lg <- newlog()
@@ -193,6 +194,21 @@ r <- run_commit(ops_for(lg, boom, raise = TRUE))
 expect_inherits(r, "runix_capability_unavailable")       # the original, re-signaled
 expect_false("write_outcome" %in% lg$seq)                # left open
 expect_equal(lg$seq, c("capability", "open", "commit"))
+## the raw runix condition carried no cid; .ensure_cid attaches the SESSION cid so
+## the killed/lost intent is reconcilable (G-INT), without replacing its class/fields
+expect_equal(r$correlation_id, CID)
+expect_inherits(r, "runix_capability_unavailable")       # class preserved
+expect_equal(conditionMessage(r), "no closefrom primitive")   # message preserved
+
+## ---- a left-open result whose delivered frame LOST its cid falls back to the
+## session cid (never leaving an unreconcilable open intent) -------------------
+lg <- newlog()
+lost <- list(session_status = "effect_unknown", status = NULL,
+             effect_issued = NA, correlation_id = NULL, detail = NULL)
+r <- run_commit(ops_for(lg, lost))
+expect_inherits(r, "runix_helper_bad_result")
+expect_false("write_outcome" %in% lg$seq)
+expect_equal(r$correlation_id, CID)                      # fell back to the session cid
 
 ## ---- persist failure: write_outcome ran, effect open, broker_error ---------
 lg <- newlog()

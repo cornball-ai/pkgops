@@ -193,6 +193,23 @@
 ## any spawn (no child-side fd-close primitive); a future refinement could close
 ## that FALSE. Leaving it open is safe (reconciliation resolves an unmatched open
 ## intent as not-applied) and never fabricates a false effect.
+## Attach a broker correlation_id to a condition that reaches the caller on a
+## left-open / effect-unknown path, so a killed or lost intent stays RECONCILABLE
+## (the whole point of leaving an intent open is to resolve it later, which needs
+## its cid). Preserves the condition's CLASS and every existing field; ADDS
+## `correlation_id` only when the condition does not already carry a usable one --
+## never overwriting a cid a lower layer set correctly.
+.ensure_cid <- function(cond, cid) {
+    if (!inherits(cond, "condition") || !.is_scalar_str(cid)) {
+        return(cond)
+    }
+    have <- cond$correlation_id
+    if (is.null(have) || (length(have) == 1L && is.na(have))) {
+        cond$correlation_id <- cid
+    }
+    cond
+}
+
 .commit_and_classify <- function(ops, session, preview, lock_timeout,
                                  deadline_ms) {
     commit <- tryCatch(
@@ -205,9 +222,20 @@
                                  plan_hash = preview$plan_hash,
                                  status = "effect_unknown", effect_issued = NA,
                                  condition = commit)
-        return(list(outcome = oc, condition = commit, leave_open = TRUE))
+        ## the RAW runix commit condition carries no session cid -> attach it, so a
+        ## mid-flight kill (G-INT) leaves a reconcilable open intent.
+        return(list(outcome = oc,
+                    condition = .ensure_cid(commit, session$correlation_id),
+                    leave_open = TRUE))
     }
-    .classify_commit(commit, preview)
+    ## every classified condition that reaches the caller carries a cid; fall back
+    ## to the session cid on a left-open / effect-unknown result whose delivered
+    ## frame lost its correlation_id (a lost result).
+    decided <- .classify_commit(commit, preview)
+    if (!is.null(decided$condition)) {
+        decided$condition <- .ensure_cid(decided$condition, session$correlation_id)
+    }
+    decided
 }
 
 ## Handle a machine-mode polkit refusal (contract 4.4). No effect intent is ever
