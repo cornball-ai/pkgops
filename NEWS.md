@@ -21,10 +21,15 @@ first release with a public code path that changes system state.
   `pkcheck`, whose denial or approval challenge is a durably-audited refusal, never
   a prompt). `lock_timeout` / `deadline_ms` / `socket_path` pass through.
 * The `DESCRIPTION` no longer says mutation is out of scope.
-* Still deferred to the **VM-gated increment**: the durable outcome-record grammar
-  (the `observed`/`changed` post-state fields the verdict feeds) and the real
-  broker/polkit proof; and, if wanted, the combined plan-and-commit `apt_<verb>_run()`
-  convenience (definable purely in terms of the two-call form).
+* Rebased onto the merged Part A durable-record grammar (0.0.1.8, below). A
+  left-open / effect-unknown condition that reaches the caller -- a mid-flight kill,
+  or a lost result -- now carries the session `correlation_id` (added, never
+  replacing its class or fields), so an open intent stays **reconcilable**; the cid
+  used to live only on an outcome the classifier discards.
+* Still deferred to the **VM-gated increment (Part B)**: the real broker/polkit
+  disposable-VM proof of the whole public path; and, if wanted, the combined
+  plan-and-commit `apt_<verb>_run()` convenience (definable purely in terms of the
+  two-call form).
 
 # pkgops 0.0.1.8
 
