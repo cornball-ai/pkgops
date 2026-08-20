@@ -85,9 +85,18 @@ r <- rec_of(mkout(verified = NA, authorized_via = "pkexec", observed = NULL,
                   observed_failed = NA, state_changed = NA,
                   verify_detail = NA_character_))
 expect_equal(sort(names(r)),
-             sort(c("operation", "resource", "effect_issued", "scope", "preview",
-                    "authorized_via")))
+             sort(c("operation", "outcome", "resource", "effect_issued", "scope",
+                    "preview", "authorized_via")))
+expect_equal(r$outcome, "ok")                 # a success status -> coarse "ok"
 expect_equal(r$authorized_via, "pkexec")
+
+## ---- the coarse `outcome`: ok for success, error for every closed failure ------
+expect_equal(rec_of(mkout(status = "no_op", effect_issued = FALSE))$outcome, "ok")
+expect_equal(rec_of(mkout(status = "operation_failed",
+                          effect_issued = TRUE))$outcome, "error")
+expect_equal(rec_of(mkout(status = "dpkg_broken", effect_issued = FALSE))$outcome,
+             "error")
+expect_equal(rec_of(mkout(status = "held", effect_issued = FALSE))$outcome, "error")
 
 ## ---- effect_issued must be a known boolean (never NA at write time) ----------
 expect_error(rec_of(mkout(effect_issued = NA)), class = "pkgops_bad_request")
@@ -96,38 +105,55 @@ expect_error(rec_of(mkout(effect_issued = NA)), class = "pkgops_bad_request")
 ## .validate_record: the schema guard
 ## ============================================================================
 
-## a minimal valid record passes
-expect_silent(validate(list(operation = "apt.install", resource = "nginx",
-                            effect_issued = TRUE, scope = "system",
-                            preview = FALSE)))
+## a minimal valid record passes (operation + outcome are the broker-required pair)
+expect_silent(validate(list(operation = "apt.install", outcome = "ok",
+                            resource = "nginx", effect_issued = TRUE,
+                            scope = "system", preview = FALSE)))
+
+## the two broker-REQUIRED fields must BOTH be present
+expect_error(validate(list(outcome = "ok", resource = "nginx")),
+             class = "pkgops_bad_request")               # missing operation
+expect_error(validate(list(operation = "apt.install", resource = "nginx")),
+             class = "pkgops_bad_request")               # missing outcome
 
 ## a broker-RESERVED key is rejected
 for (k in RESERVED) {
-    bad <- list(operation = "apt.install", resource = "nginx",
+    bad <- list(operation = "apt.install", outcome = "ok", resource = "nginx",
                 effect_issued = TRUE)
     bad[[k]] <- "x"
     expect_error(validate(bad), class = "pkgops_bad_request")
 }
 
 ## a NON-allow-list field is rejected (the smuggled-field case)
-expect_error(validate(list(operation = "apt.install", resource = "nginx",
-                           effect_issued = TRUE, verified = TRUE)),
+expect_error(validate(list(operation = "apt.install", outcome = "ok",
+                           resource = "nginx", effect_issued = TRUE,
+                           verified = TRUE)),
              class = "pkgops_bad_request")   # `verified` is NOT a broker field
-expect_error(validate(list(operation = "apt.install", request_id = "42")),
+expect_error(validate(list(operation = "apt.install", outcome = "ok",
+                           request_id = "42")),
              class = "pkgops_bad_request")
 
-## wrong TYPES are rejected (the broker validates T_BOOL / T_OBJECT / ...)
-expect_error(validate(list(changed = "yes")), class = "pkgops_bad_request")   # bool
-expect_error(validate(list(observed = "nginx")), class = "pkgops_bad_request") # object
-expect_error(validate(list(state_changed = list(a = 1))),
+## wrong TYPES are rejected (the broker validates T_BOOL / T_OBJECT / ...); each
+## record carries the required pair so the presence guard does not mask the type
+## check.
+base_ok <- list(operation = "apt.install", outcome = "ok")
+expect_error(validate(c(base_ok, list(changed = "yes"))),
              class = "pkgops_bad_request")                                     # bool
-expect_error(validate(list(elapsed = -1)), class = "pkgops_bad_request")       # >= 0
-expect_error(validate(list(effect_issued = NA)), class = "pkgops_bad_request") # non-NA
+expect_error(validate(c(base_ok, list(observed = "nginx"))),
+             class = "pkgops_bad_request")                                     # object
+expect_error(validate(c(base_ok, list(state_changed = list(a = 1)))),
+             class = "pkgops_bad_request")                                     # bool
+expect_error(validate(c(base_ok, list(elapsed = -1))),
+             class = "pkgops_bad_request")                                     # >= 0
+expect_error(validate(c(base_ok, list(effect_issued = NA))),
+             class = "pkgops_bad_request")                                     # non-NA
 
-## a correct object / bool / number pass
-expect_silent(validate(list(observed = list("nginx:amd64" =
+## a correct object / bool / number pass (with the required pair present)
+expect_silent(validate(list(operation = "apt.install", outcome = "ok",
+                            observed = list("nginx:amd64" =
                                             list(status = "installed")))))
-expect_silent(validate(list(changed = TRUE, state_changed = FALSE,
+expect_silent(validate(list(operation = "apt.install", outcome = "error",
+                            changed = TRUE, state_changed = FALSE,
                             observed_failed = FALSE, elapsed = 0)))
 
 ## ---- the allow-list is exactly the broker's 16 domain fields -----------------
