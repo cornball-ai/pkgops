@@ -91,6 +91,15 @@ reviewed increments** — hold at each increment before the next.
   `.validate_record()` mirrors the broker guard (rejects non-allow-list field,
   reserved key, wrong type). Observation is **success-path only**; the failure-path
   `observed` shape stays deferred. Plan: `runix/docs/pkgops-vm-gate-plan.md`.
+  - **Part B follow-up (the coarse `outcome`)**: `RECORD_SCHEMA` marks `operation`
+    and `outcome` REQUIRED, so a record without `outcome` is `schema_invalid` at
+    `write_outcome` — a Part B finding the hermetic fake broker could not surface.
+    `.outcome_record()` now derives the coarse `outcome` from the closed status
+    (`ok` for `ok`/`no_op`, `error` for every closed failure/refusal), keeping the
+    detailed per-package result in `observed`. `.validate_record()` enforces the
+    required pair locally (`.PKGOPS_RECORD_REQUIRED`). The R-level refuse path
+    (`session_ops.R`) already carried `outcome` (`intent` + status); the native
+    effect-session open_intent gained the field in runix (`effect_session.c`).
 - **Still NOT started** (later increments, each its own review): **Part B** — the
   disposable-VM proof that pins the durable record grammar, the plain-intent
   refusal record grammar, and the exact pkcheck rc→outcome split against a real
