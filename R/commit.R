@@ -196,15 +196,17 @@
 ## Attach a broker correlation_id to a condition that reaches the caller on a
 ## left-open / effect-unknown path, so a killed or lost intent stays RECONCILABLE
 ## (the whole point of leaving an intent open is to resolve it later, which needs
-## its cid). Preserves the condition's CLASS and every existing field; ADDS
-## `correlation_id` only when the condition does not already carry a usable one --
-## never overwriting a cid a lower layer set correctly.
+## its cid). Preserves the condition's CLASS and every existing field. Replaces the
+## condition's `correlation_id` unless it is ALREADY a well-formed broker cid: a
+## missing, NA, empty, or malformed value is overwritten with the (well-formed)
+## session cid, so an open intent is never left with an unreconcilable cid; a valid
+## cid a lower layer set correctly is kept. A non-well-formed session cid is never
+## stamped (that would replace one bad cid with another).
 .ensure_cid <- function(cond, cid) {
-    if (!inherits(cond, "condition") || !.is_scalar_str(cid)) {
+    if (!inherits(cond, "condition") || !.valid_broker_cid(cid)) {
         return(cond)
     }
-    have <- cond$correlation_id
-    if (is.null(have) || (length(have) == 1L && is.na(have))) {
+    if (!.valid_broker_cid(cond$correlation_id)) {
         cond$correlation_id <- cid
     }
     cond

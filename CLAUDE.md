@@ -98,9 +98,10 @@ reviewed increments** — hold at each increment before the next.
   caller (a mid-flight kill or a lost result), preserving its class/fields, so an
   open intent is reconcilable -- needed by the Part B G-INT gate.
 - **Still NOT started: Part B** — the disposable-VM proof that drives the real pkgops
-  path (34 gates via `pkgops::apt_<verb>()`, G12-G14 via the `rab-exercise` broker
-  oracle, G11a/G11b via direct `pkexec`) and pins the durable record shape against a
-  real broker/polkit; then the `rctl apt.*` surface.
+  path (every functional gate via `pkgops::apt_<verb>()`; G12-G14 + G15 via the
+  `rab-exercise` broker oracle; G11a/G11b via direct `pkexec`) and pins the durable
+  record shape against a real broker/polkit; then the `rctl apt.*` surface. G9/G-OWN
+  are pkgops preview-side refusals (no intent opened), not broker-redemption refusals.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).
