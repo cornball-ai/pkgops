@@ -53,14 +53,19 @@ run_authorize <- function(pkfn, verb_spec, interactive) {
     authorize(verb_spec, interactive)
 }
 
-## interactive mode defers to the pkexec prompt: pkcheck is NOT run ------------
+## .authorize returns list(decision, via): `via` is the authorized_via provenance
+## on an authorized decision, NA on a refusal (nothing authorized).
+
+## interactive mode defers to the pkexec prompt: pkcheck is NOT run; via = pkexec -
 calls <- new.env(parent = emptyenv())
 calls$n <- 0L
 never <- function(action) {
     calls$n <- calls$n + 1L
     0L
 }
-expect_equal(run_authorize(never, verbs$install, TRUE), "authorized")
+r <- run_authorize(never, verbs$install, TRUE)
+expect_equal(r$decision, "authorized")
+expect_equal(r$via, "pkexec")
 expect_equal(calls$n, 0L)                          # never queried polkit
 
 ## machine mode runs pkcheck for the verb's action and maps the result --------
@@ -71,22 +76,40 @@ mk <- function(rc) {
         rc
     }
 }
-expect_equal(run_authorize(mk(0L), verbs$install, FALSE), "authorized")
+## a non-autonomous verb authorized in machine mode -> via = pkcheck
+r <- run_authorize(mk(0L), verbs$install, FALSE)
+expect_equal(r$decision, "authorized")
+expect_equal(r$via, "pkcheck")
 expect_equal(seen$action, "ai.cornball.runix.apt.install")   # verb -> action
-expect_equal(run_authorize(mk(1L), verbs$remove, FALSE), "unauthorized")
+## refusals carry decision + via = NA (nothing was authorized)
+r <- run_authorize(mk(1L), verbs$remove, FALSE)
+expect_equal(r$decision, "unauthorized")
+expect_true(is.na(r$via))
 expect_equal(seen$action, "ai.cornball.runix.apt.remove")
-expect_equal(run_authorize(mk(2L), verbs$purge, FALSE), "approval_required")
-expect_equal(run_authorize(mk(127L), verbs$install, FALSE), "check_failed")
+r <- run_authorize(mk(2L), verbs$purge, FALSE)
+expect_equal(r$decision, "approval_required")
+expect_true(is.na(r$via))
+r <- run_authorize(mk(127L), verbs$install, FALSE)
+expect_equal(r$decision, "check_failed")
+expect_true(is.na(r$via))
 
 ## autonomous needs no special-casing: the SAME check, the rule grants members -
 ## a fake standing in for "member of runix-apt-autonomous" (update/hold -> rc 0).
+## An authorized autonomous-class verb records via = autonomous.
 autofn <- function(action) {
     if (grepl("\\.(update|hold)$", action)) 0L else 1L
 }
-expect_equal(run_authorize(autofn, verbs$update, FALSE), "authorized")
-expect_equal(run_authorize(autofn, verbs$hold, FALSE), "authorized")
-expect_equal(run_authorize(autofn, verbs$unhold, FALSE), "unauthorized")   # not autonomous
-expect_equal(run_authorize(autofn, verbs$install, FALSE), "unauthorized")
+r <- run_authorize(autofn, verbs$update, FALSE)
+expect_equal(r$decision, "authorized")
+expect_equal(r$via, "autonomous")
+r <- run_authorize(autofn, verbs$hold, FALSE)
+expect_equal(r$decision, "authorized")
+expect_equal(r$via, "autonomous")
+r <- run_authorize(autofn, verbs$unhold, FALSE)
+expect_equal(r$decision, "unauthorized")           # not autonomous
+expect_true(is.na(r$via))
+r <- run_authorize(autofn, verbs$install, FALSE)
+expect_equal(r$decision, "unauthorized")
 
 ## ---- the subject builder is pid,start-time,uid (real /proc on Linux) --------
 if (file.exists("/proc/self/stat")) {

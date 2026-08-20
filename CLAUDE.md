@@ -59,7 +59,7 @@ reviewed increments** — hold at each increment before the next.
   (`pkgstate_reader()`/`set_pkgstate_reader`, hermetic-test-only). **`pkgstate` is
   now an `Imports`** (the default reader uses it). Record grammar/post-state pinned
   to pkgexec 0.0.3 + pkgstate 0.0.1.9.
-- **Increment 5b (this): wire verification into `.commit_session` step 6** —
+- **Increment 5b (merged): wire verification into `.commit_session` step 6** —
   after commit + classify, on the **success path only** (`is.null(condition)`: an
   `ok`/`no_op` that will be returned), `.verify_and_capture()` runs `.verify()` and
   captures `verified`/`verify_detail` onto the returned outcome. **Observational**:
@@ -68,12 +68,33 @@ reviewed increments** — hold at each increment before the next.
   (step 7) and outcome-before-signal holds. A known failure / left-open effect is
   not verified. The reader stays behind the seam, so `.commit_session` is fully
   hermetic (fake session-ops + fake pkcheck + fake reader).
-- **Still NOT started** (later increments, each its own review): the **exported
-  per-verb `apt_<verb>()` API** (with the preview `{verb,resource,plan_hash}` match
-  check). The durable outcome-record grammar (incl. the `observed`/`changed`
-  post-state fields the verdict feeds), the plain-intent refusal record grammar,
-  and the exact pkcheck rc→outcome split are pinned against a real broker/polkit in
-  the VM-gated increment.
+- **Increment 6 (draft PR #9, HELD): exported per-verb `apt_<verb>()` API** — the
+  nine `apt_<verb>(preview, ...)` commit wrappers with the preview
+  `{verb,resource,plan_hash}` match check; interactive defaults to
+  `base::interactive()`. This makes pkgops **mutation-capable**. Held pending the
+  VM proof (Part B) that the complete public path + durable record shape hold
+  against a real broker/polkit.
+- **VM-gate increment Part A (this): durable audit record grammar** — enrich the
+  committed outcome with the broker `RECORD_SCHEMA` fields so the exported API
+  writes a complete record. `.observe()` reads the resolved records' post-state
+  into the record's `observed` object, keyed by `package:arch` (`{status,version}`
+  for txn/configure, `{selection}` for hold -- one entry per matched arch, since an
+  unqualified hold target can span arches); `.freeze_reader()` gives verdict +
+  observe one shared post-read. `state_changed` is a real pre/post `.observe()` diff
+  (D7 = S-B), `NA` when either side is unavailable, never inferred from
+  `effect_issued`; `apt.update` observes nothing, so observed/changed/state_changed
+  are all omitted.
+  `.authorized_via()` records `pkexec`/`autonomous`/`pkcheck` at the authorization
+  site (`.authorize()` now returns `list(decision, via)`). `.outcome_record()`
+  maps onto the broker's 16-field allow-list (omitting `NA`/`NULL` optionals;
+  `verified` → `changed` only when the post-state was read), and
+  `.validate_record()` mirrors the broker guard (rejects non-allow-list field,
+  reserved key, wrong type). Observation is **success-path only**; the failure-path
+  `observed` shape stays deferred. Plan: `runix/docs/pkgops-vm-gate-plan.md`.
+- **Still NOT started** (later increments, each its own review): **Part B** — the
+  disposable-VM proof that pins the durable record grammar, the plain-intent
+  refusal record grammar, and the exact pkcheck rc→outcome split against a real
+  broker/polkit; then the `rctl apt.*` surface.
 
 The authoritative design is `runix/docs/pkgops-plan.md` (the approved contract)
 and `runix/docs/pkgops-implementation-plan.md` (rev 2, the build sequence).

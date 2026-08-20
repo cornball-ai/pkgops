@@ -145,18 +145,33 @@
 ## object never carries an unmapped or unknown status. `effect_issued` is the
 ## helper's tri-state (untrusted -> normalized); `verified` is pkgops's own
 ## tri-state verdict (enforced, not normalized); `condition` is the runix
-## condition object for a non-success outcome, or NULL. `verified`/`verify_detail`
-## are NA in this increment -- pkgstate verification lands in a later one.
+## condition object for a non-success outcome, or NULL.
+##
+## The durable post-state fields feed the audit record the VM-gate increment writes
+## (VM-gate plan 2.2): `authorized_via` (the polkit provenance, 2.5), `observed`
+## (the post-state pkgstate read, a named object or NULL, 2.4), `observed_failed`
+## (the post-read threw), and `state_changed` (the observed pre/post diff, D7=S-B).
+## All default to the "not captured" value so the classifier's callers are
+## unchanged; the commit lifecycle sets them (authorized_via always, the rest on the
+## success path). `observed` NULL is dropped from the list -- `$observed` still
+## reads back NULL.
 new_pkgops_outcome <- function(correlation_id, verb, resource, plan_hash,
                                status, effect_issued = NA, verified = NA,
                                verify_detail = NA_character_,
-                               condition = NULL) {
+                               condition = NULL,
+                               authorized_via = NA_character_,
+                               observed = NULL, observed_failed = NA,
+                               state_changed = NA) {
     structure(list(schema_version = 1L, correlation_id = correlation_id,
                    verb = verb, resource = resource, plan_hash = plan_hash,
                    status = .status_condition(status),
                    effect_issued = .norm_effect_issued(effect_issued),
                    verified = .check_tristate(verified, "verified"),
-                   verify_detail = verify_detail, condition = condition),
+                   verify_detail = verify_detail, condition = condition,
+                   authorized_via = authorized_via, observed = observed,
+                   observed_failed = .check_tristate(observed_failed,
+                "observed_failed"),
+                   state_changed = .check_tristate(state_changed, "state_changed")),
               class = "pkgops_outcome")
 }
 
