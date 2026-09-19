@@ -1,3 +1,20 @@
+# pkgops 0.0.1.12
+
+* Transaction and configure verification now match dpkg's `Architecture: all`
+  packages to libapt's concrete architecture records. Durable observations keep
+  the plan's package identity and capture the actual installed or broken state.
+* Other concrete architectures remain distinct. Duplicate or ambiguous installed
+  rows fail verification and mark the observation unavailable.
+
+# pkgops 0.0.1.11
+
+* Known commit failures now capture observed package state before writing the
+  durable outcome and raising the original condition. A `dpkg_broken` outcome
+  records the half-configured package state, verification verdict, and observed
+  transition while preserving the helper's status and `effect_issued` boolean.
+* Failed state reads are recorded as unavailable. Unknown effects still leave
+  their intent open without a fabricated outcome.
+
 # pkgops 0.0.1.10
 
 Commit lifecycle (slice 3b): the **exported per-verb `apt_<verb>()` commit API**

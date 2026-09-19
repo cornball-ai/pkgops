@@ -135,6 +135,20 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
     invisible(df)
 }
 
+## libapt P.Arch() names the cache architecture, including the native slot for
+## Architecture: all packages. dpkg retains "all" in its Architecture column.
+## Match that architecture-independent row without accepting a different concrete
+## architecture. Ambiguous ground truth fails closed rather than choosing a row.
+.installed_row <- function(inst, package, architecture) {
+    row <- inst[!is.na(inst$package) & inst$package == package &
+        !is.na(inst$architecture) &
+        inst$architecture %in% c(architecture, "all"), , drop = FALSE]
+    if (nrow(row) > 1L) {
+        stop(sprintf("ambiguous installed state for %s:%s", package, architecture))
+    }
+    row
+}
+
 ## Fold per-record failure messages into a (verified, detail) verdict: any
 ## failure -> verified FALSE with the joined reasons; none -> verified TRUE.
 .verify_result <- function(fails) {
@@ -215,9 +229,7 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
             fails <- c(fails, "malformed transaction record")
             next
         }
-        row <- inst[!is.na(inst$package) & inst$package == pkg &
-            !is.na(inst$architecture) &
-            inst$architecture == arch,, drop = FALSE]
+        row <- .installed_row(inst, pkg, arch)
         why <- .check_txn_state(action, to_version, row)
         if (!is.na(why)) {
             fails <- c(fails, sprintf("%s: %s", pkg, why))
@@ -241,9 +253,7 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
             fails <- c(fails, "malformed configure record")
             next
         }
-        row <- inst[!is.na(inst$package) & inst$package == pkg &
-            !is.na(inst$architecture) &
-            inst$architecture == arch,, drop = FALSE]
+        row <- .installed_row(inst, pkg, arch)
         if (nrow(row) > 0L) {
             status <- as.character(row$status[1L])
         } else {
@@ -359,7 +369,9 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
 }
 
 ## The observed installed state (txn + configure): {status, version} per record,
-## keyed by `package:arch`. An absent package reads back as not-installed/"" so the
+## keyed by the PLAN's `package:arch`, also when dpkg reports Architecture: all.
+## Keeping the plan identity gives pre/post observations stable keys. An absent
+## package reads back as not-installed/"" so the
 ## key is still present (documenting what was checked). A malformed record (no
 ## package/arch) is skipped -- .verify already fails it; the observation only
 ## records what it can read.
@@ -375,9 +387,7 @@ set_pkgstate_reader <- .pkgops_pkgstate_reader$set_pkgstate_reader
             next
         }
         key <- paste0(pkg, ":", arch)
-        row <- inst[!is.na(inst$package) & inst$package == pkg &
-            !is.na(inst$architecture) &
-            inst$architecture == arch,, drop = FALSE]
+        row <- .installed_row(inst, pkg, arch)
         if (nrow(row) > 0L) {
             state[[key]] <- list(status = as.character(row$status[1L]),
                                  version = as.character(row$version[1L]))

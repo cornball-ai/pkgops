@@ -1,5 +1,5 @@
 # The commit-session orchestrator (R/commit.R): capability -> open -> commit ->
-# classify -> [verify deferred] -> write_outcome -> signal, with the outcome
+# classify -> observe known result -> write_outcome -> signal, with the outcome
 # ALWAYS written before the condition is signaled (contract 4.8). Hermetic: the
 # four runix effect-session calls are replaced through the session-ops seam
 # (R/session_ops.R), so nothing reaches a broker, a pkexec entrypoint, or dpkg.
@@ -432,7 +432,7 @@ expect_equal(lg$seq, c("capability", "refuse"))
 ## ============================================================================
 ## step 6 -- pkgstate verification (contract 4.7). The verdict is CAPTURED onto
 ## the outcome, NEVER raised; the outcome is still written, in order; and
-## verification runs ONLY on the success path (an ok/no_op that is returned).
+## verification runs for every known result, including a signaled failure.
 ## ============================================================================
 
 ## A committable install preview carrying one resolved txn record, and a fake
@@ -506,20 +506,20 @@ expect_inherits(r, "pkgops_outcome")
 expect_true(is.na(r$verified))
 expect_equal(cr_untouched$n, 0L)                         # short-circuits, no read
 
-## a KNOWN FAILURE is not verified: verification does not run (a failure path has
-## no trustworthy post-state), and the mapped condition is still signaled after
-## the outcome was written.
+## A known failure still has observable post-state. A matching read does not
+## replace the helper's failure: the error outcome is written before signaling.
 cr_fail <- counting_reader(status = "installed", version = "1.2")  # would verify TRUE
 lg <- newlog()
 r <- run_commit(ops_for(lg, cr("ok", "operation_failed", TRUE)), preview = prev1,
                 reader = cr_fail$reader)
 expect_inherits(r, "runix_operation_failed")
-## only the pre-commit snapshot reads on a failure path; the verdict + post-state
-## observation are success-path only, so no post-commit read happens
-expect_equal(cr_fail$n, 1L)
+expect_equal(cr_fail$n, 2L)                             # pre + shared post-read
+expect_identical(lg$record$changed, TRUE)               # matches despite helper failure
+expect_identical(lg$record$state_changed, FALSE)        # same observed state before/after
+expect_identical(lg$record$outcome, "error")
 expect_true("write_outcome" %in% lg$seq)                 # known close still written
 
-## a LEFT-OPEN effect_unknown is not verified either (the effect is unknown) and
+## A left-open effect_unknown is not verified (the effect is unknown) and
 ## the intent stays open (no write_outcome).
 cr_open <- counting_reader(status = "installed", version = "1.2")
 lg <- newlog()
@@ -627,4 +627,5 @@ r <- run_commit(ops_for(lg, cr("ok", "operation_failed", TRUE)), preview = prev1
                 reader = counting_reader()$reader)
 expect_inherits(r, "runix_operation_failed")
 expect_equal(lg$record$authorized_via, "pkcheck")        # authorized before it failed
-expect_false("changed" %in% names(lg$record))            # not verified on a failure
+expect_identical(lg$record$changed, TRUE)               # independent post-state verdict
+expect_identical(lg$record$outcome, "error")             # helper failure preserved
