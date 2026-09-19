@@ -454,14 +454,13 @@
     }
 
     ## step 6 -- pkgstate VERIFICATION + post-state capture (contract 4.7 / VM-gate
-    ## plan 2.2-2.4). Only on the success path (is.null(condition): an ok/no_op that
-    ## will be RETURNED, not signaled): cross-check the committed preview against
-    ## native ground truth and capture the verdict + the observed post-state + the
-    ## pre/post diff onto the outcome. A known failure carries its own condition and
-    ## a left-open effect is unknown, so neither has a trustworthy post-state. This
-    ## is observational -- never raises, never changes close/open -- so the outcome
-    ## is still written below and the outcome-before-signal order holds.
-    if (is.null(decided$condition)) {
+    ## plan 2.2-2.4). Observe every known result before closing its outcome,
+    ## including partial failures: the boundary contract requires broken package
+    ## state in the durable record. A trustworthy helper failure does not make
+    ## a fresh pkgstate read untrustworthy. Keep the helper's status and effect
+    ## boolean unchanged; observation never raises or changes close/open. Unknown
+    ## effects still leave their intent open without fabricating an outcome.
+    if (!decided$leave_open) {
         decided$outcome <- .capture_post(decided$outcome, preview, before)
     }
 
