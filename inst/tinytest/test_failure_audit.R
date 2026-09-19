@@ -55,7 +55,7 @@ local({
             resource = if (verb == "configure") "" else "canary-fixture",
             packages = if (verb == "configure") character() else "canary-fixture",
             plan_schema = 1L, plan_hash = strrep("b", 64L), advisory_verdict = "ok",
-            records = list(list(package = "canary-fixture", architecture = "all",
+            records = list(list(package = "canary-fixture", architecture = "amd64",
                 action = "install", to_version = "1.0", state = "half-configured"))),
             class = "pkgops_preview")
         commit <- if (verb == "configure") pkgops::apt_configure else pkgops::apt_install
@@ -77,7 +77,7 @@ local({
     expect_identical(x$record$effect_issued, TRUE)
     expect_identical(x$record$authorized_via, "pkcheck")
     expect_identical(x$record$observed,
-                     list("canary-fixture:all" = list(status = "half-configured", version = "1.0")))
+                     list("canary-fixture:amd64" = list(status = "half-configured", version = "1.0")))
     expect_identical(x$record$changed, FALSE)
     expect_identical(x$record$state_changed, TRUE)
     expect_identical(x$record$observed_failed, FALSE)
@@ -86,7 +86,7 @@ local({
     x <- exercise(verb = "configure", before = broken)
     expect_inherits(x$result, "runix_dpkg_broken")
     expect_identical(x$record$operation, "apt.configure")
-    expect_identical(x$record$observed[["canary-fixture:all"]]$status, "half-configured")
+    expect_identical(x$record$observed[["canary-fixture:amd64"]]$status, "half-configured")
     expect_identical(x$record$changed, FALSE)
     expect_identical(x$record$state_changed, FALSE)
     expect_identical(x$record$effect_issued, TRUE)
@@ -98,7 +98,7 @@ local({
     expect_identical(x$result$effect_issued, FALSE)
     expect_identical(x$record$effect_issued, FALSE)
     expect_identical(x$record$state_changed, FALSE)
-    expect_identical(x$record$observed[["canary-fixture:all"]]$status, "half-configured")
+    expect_identical(x$record$observed[["canary-fixture:amd64"]]$status, "half-configured")
 
     # A read failure cannot replace the helper failure or invent observed state.
     x <- exercise(read_fail = TRUE)
@@ -114,7 +114,7 @@ local({
     expect_inherits(x$result, "runix_broker_error")
     expect_identical(x$result$persist_status, "persist_failed")
     expect_identical(x$result$effect_issued, TRUE)
-    expect_identical(x$record$observed[["canary-fixture:all"]]$status, "half-configured")
+    expect_identical(x$record$observed[["canary-fixture:amd64"]]$status, "half-configured")
     expect_identical(tail(x$events, 3L), c("post-read", "write_outcome", "signal"))
 
     # Unknown effect: no post-read and no fabricated outcome closes the intent.
