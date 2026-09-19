@@ -1,3 +1,11 @@
+# pkgops 0.0.1.12
+
+* Transaction and configure verification now match dpkg's `Architecture: all`
+  packages to libapt's concrete architecture records. Durable observations keep
+  the plan's package identity and capture the actual installed or broken state.
+* Other concrete architectures remain distinct. Duplicate or ambiguous installed
+  rows fail verification and mark the observation unavailable.
+
 # pkgops 0.0.1.11
 
 * Known commit failures now capture observed package state before writing the
